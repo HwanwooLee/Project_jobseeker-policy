@@ -7,7 +7,10 @@
      update : 안내 문자에서 새로 저장한 일정만
    메일 맨 위 [📱 내 폰 캘린더에 추가] → /api/add-calendar (서명된 링크, add-calendar.js)
      앱 안의 브라우저면 사파리·크롬으로 넘겨서 "모두 추가"까지 이어짐
-   버튼이 안 될 때: 단계별 구글 캘린더 링크
+   버튼이 안 될 때: 단계별 구글 캘린더 링크 (최대 5개)
+   스팸으로 분류되지 않게 링크는 최소로: 관리 화면 1개 + 캘린더 버튼 1개 + 구글 캘린더 최대 5개
+   (단계별 "출처 확인" 링크는 넣지 않음 — 출처는 관리 화면에서 확인)
+   HTML 메일과 같은 내용의 글 버전(text/plain)도 함께 보냄
    (.ics 첨부는 하지 않음 — 메일 앱에서 미리보기만 되거나 회의 초대로 보이는 문제가 있어서 버튼 하나로 통일)
    이후 알림은 사용자 캘린더가 담당 (매일 자동 메일 없음)
    키는 환경변수(GMAIL_USER, GMAIL_APP_PASSWORD, ICS_SIGN_SECRET)에서만 읽음
@@ -26,6 +29,7 @@ const SAME_IP_WAIT_MS = 10 * 1000;
 const LINK_WARN_CHARS = 2000;            // 이보다 긴 링크는 일부 메일 앱에서 잘릴 수 있음
 // 링크에 관리 기록·(암호화된) 이메일이 들어 있어서, 다른 사람에게 전달하지 않도록 안내
 const PRIVATE_LINK_NOTE = '이 메일의 링크는 본인만 사용해 주세요.';
+const MAX_GOOGLE_LINKS = 5;               // 구글 캘린더 링크는 최대 5개 (링크가 많으면 스팸으로 분류되기 쉬움)
 const BUTTON_HINT ="누르면 사파리(안드로이드는 크롬)로 넘어가요. 거기서 '모두 추가'를 눌러 주세요.";
 
 const C = {
@@ -62,7 +66,6 @@ function stepRow(s, i, today) {
     (s.note ? '<div style="font-size:13px;color:' + C.muted + ';margin-top:3px;">' + L.escapeHtml(s.note) + '</div>' : '') +
     (s.evidence ? '<div style="font-size:12px;color:' + C.muted + ';margin-top:3px;border-left:3px solid #d5dcf3;padding-left:8px;">근거: “' + L.escapeHtml(s.evidence) + '”</div>' : '') +
     (s.warning ? '<div style="font-size:13px;font-weight:700;color:' + C.red + ';background:' + C.redSoft + ';border-radius:8px;padding:6px 10px;margin-top:6px;">⚠ ' + L.escapeHtml(s.warning) + '</div>' : '') +
-    (s.sourceUrl ? '<div style="margin-top:6px;">' + link('출처 확인', s.sourceUrl) + '</div>' : '') +
     '</td></tr>';
 }
 
@@ -76,13 +79,22 @@ function topBox(calLink, icsCount) {
     '</td></tr>';
 }
 
+// 구글 캘린더 링크: 아직 안 한 단계 중 링크를 만들 수 있는 것 앞에서부터 최대 5개
+function googleLinks(plan, steps, today) {
+  const all = steps.filter(function (s) { return !s.done; })
+    .map(function (s) { return { title: s.title, href: ICS.googleLink(plan, s, today) }; })
+    .filter(function (g) { return g.href; });
+  return { list: all.slice(0, MAX_GOOGLE_LINKS), rest: Math.max(0, all.length - MAX_GOOGLE_LINKS) };
+}
+function restNote(n) { return '나머지 일정 ' + n + '개는 [내 폰 캘린더에 추가] 버튼이나 관리 화면에서 추가해 주세요.'; }
+
 // 아래쪽 작게: 버튼이 안 될 때 → 단계별 구글 캘린더 링크만
 function fallbackBox(plan, steps, today, calLink, icsCount) {
   if (!icsCount) return '';
-  const gLinks = steps.filter(function (s) { return !s.done; }).map(function (s) {
-    const href = ICS.googleLink(plan, s, today);
-    return href ? '<div style="padding:3px 0;">' + link('+ ' + s.title, href, 12) + '</div>' : '';
-  }).join('');
+  const g = googleLinks(plan, steps, today);
+  if (!g.list.length) return '';
+  const gLinks = g.list.map(function (x) { return '<div style="padding:3px 0;">' + link('+ ' + x.title, x.href, 12) + '</div>'; }).join('') +
+    (g.rest ? '<div style="padding-top:4px;">' + L.escapeHtml(restNote(g.rest)) + '</div>' : '');
   return '<tr><td style="padding:18px 24px 0;"><div style="background:#f6f7fb;border-radius:12px;padding:12px 14px;font-size:12px;line-height:1.6;color:' + C.muted + ';">' +
     '<b style="color:' + C.text + ';">' + (calLink ? '버튼이 안 될 때' : '캘린더에 추가하기') + '</b><br>' +
     '구글 캘린더에 하나씩 추가 (알림은 캘린더 기본 설정을 따라요):' + gLinks +
@@ -131,14 +143,18 @@ function buildText(plan, steps, today, mode, calLink) {
     lines.push((s.done ? '[완료] ' : (i + 1) + '. ') + s.title + ' — ' + dateText(s) + (s.done ? '' : (ICS.alarmLabel(s, today) ? ' · ' + ICS.alarmLabel(s, today) : '')));
     if (s.note) lines.push('   ' + s.note);
     if (s.warning) lines.push('   ⚠ ' + s.warning);
+    if (s.evidence) lines.push('   근거: "' + s.evidence + '"');
   });
   if (plan.manageLink || plan.manageUrl) lines.push('', '관리 화면: ' + (plan.manageLink || plan.manageUrl));
   // 버튼이 안 될 때: 단계별 구글 캘린더 링크
-  const gLines = steps.filter(function (s) { return !s.done; }).map(function (s) {
-    const href = ICS.googleLink(plan, s, today);
-    return href ? '- ' + s.title + ': ' + href : '';
-  }).filter(Boolean);
-  if (gLines.length) lines.push('', (calLink ? '버튼이 안 될 때 — ' : '') + '구글 캘린더에 하나씩 추가:', gLines.join('\n'));
+  const g = googleLinks(plan, steps, today);
+  if (g.list.length) {
+    lines.push('', (calLink ? '버튼이 안 될 때 — ' : '') + '구글 캘린더에 하나씩 추가:');
+    g.list.forEach(function (x) { lines.push('- ' + x.title + ': ' + x.href); });
+    if (g.rest) lines.push(restNote(g.rest));
+  }
+  lines.push('', '정보는 온통청년 공공데이터와 공식 공고 기준이에요. 안내 받은 날짜가 다르면 안내를 따라 주세요.');
+  lines.push('시연용 서비스라 매일 자동 메일은 보내지 않아요. 이후 알림은 캘린더가 담당해요.');
   lines.push('', PRIVATE_LINK_NOTE);
   return lines.join('\n');
 }

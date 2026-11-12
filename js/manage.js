@@ -911,24 +911,6 @@
     return wrap;
   }
 
-  // --- 결과 화면 알림 메일용 요약 (정책명, 지금 할 일, 다음 날짜) ---
-  const SUMMARY_KEY = 'myApplicationsSummary';
-  function writeSummary() {
-    const list = Object.keys(apps.items).map(function (no) {
-      const app = apps.items[no];
-      const built = buildSteps(app, policyOf(no)).steps;
-      const pending = built.filter(function (s) { return !s.done && s.id !== 'applied'; });
-      const next = pending.find(function (s) { return !s.monthly; }) || pending[0];
-      const dates = pending.filter(function (s) { return s.type === 'exact' && s.date && daysFromToday(s.date) >= 0; })
-        .map(function (s) { return s.date; }).sort();
-      return { name: app.plcyNm, todo: next ? next.title : '', nextDate: dates[0] || '' };
-    });
-    try {
-      if (list.length) sessionStorage.setItem(SUMMARY_KEY, JSON.stringify(list));
-      else sessionStorage.removeItem(SUMMARY_KEY);
-    } catch (e) { /* 무시 */ }
-  }
-
   // 지금 보고 있는 정책 (주소 끝 #p=정책번호). 없으면 목록 보기
   function currentView() {
     const m = /^#p=([0-9A-Za-z-]+)$/.exec(location.hash);
@@ -961,7 +943,6 @@
     }
     list.classList.toggle('summary-list', !view);
     $('empty-card').hidden = nos.length > 0 || !$('start-card').hidden;
-    writeSummary();
   }
   window.addEventListener('hashchange', function () { render(); window.scrollTo(0, 0); });
 

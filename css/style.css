@@ -338,59 +338,6 @@ p  { margin: 0; }
 .summary-hidden { margin-top: 2px; font-size: 0.85rem; color: var(--muted); }
 
 /* 알림 신청 카드 */
-.notify-card {
-  border: 2px solid var(--accent);
-  border-radius: 20px;
-  padding: 18px;
-  background: var(--accent-soft);
-  margin-bottom: 24px;
-}
-.notify-title {
-  font-size: 1.12rem;
-  margin: 0 0 12px;
-  word-break: keep-all;
-}
-.notify-form {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-  align-items: center;
-}
-.notify-input {
-  flex: 1 1 260px;
-  min-width: 0;
-  font: inherit;
-  font-size: 1rem;
-  color: var(--text);
-  background: #fff;
-  border: 2px solid var(--line);
-  border-radius: 999px;
-  padding: 12px 18px;
-}
-.notify-input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 4px #fff; }
-.notify-channels {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px 14px;
-  border: 0;
-  margin: 0;
-  padding: 0;
-  order: 3;
-  flex-basis: 100%;
-}
-.channel { display: inline-flex; align-items: center; gap: 6px; font-size: 0.92rem; cursor: pointer; }
-.channel input { width: 18px; height: 18px; accent-color: var(--accent); }
-.channel.disabled { color: #9aa0b8; cursor: not-allowed; }
-.soon {
-  font-size: 0.72rem;
-  font-weight: 700;
-  color: var(--muted);
-  background: #fff;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  padding: 1px 7px;
-}
-.notify-btn { border-radius: 999px; font-weight: 700; padding: 12px 22px; }
 .notify-msg { margin-top: 10px; font-size: 0.92rem; min-height: 1.4em; }
 .notify-msg.error { color: var(--miss); }
 .notify-msg.success { color: #157a48; font-weight: 700; }
@@ -546,7 +493,6 @@ p  { margin: 0; }
   .summary-title { font-size: 1.35rem; }
   .tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; overflow: visible; }
   .tab { font-size: 0.9rem; padding: 8px 6px; }
-  .notify-btn { flex: 1 1 100%; }
   .pcard { padding: 16px; }
 }
 

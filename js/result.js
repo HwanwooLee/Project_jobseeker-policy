@@ -1129,112 +1129,7 @@
   });
   window.addEventListener('resize', function () { if (!sheet.hidden) measureClamps(); });
 
-  // ===== 9. 알림 메일 즉시 발송 (서버 기능 /api/send-alert) =====
-  const EMAIL_RE = /^[^\s@<>"',;:()\[\]\\]+@[^\s@<>"',;:()\[\]\\]+\.[A-Za-z]{2,}$/;
-  const SEND_COOLDOWN = 30;          // 보낸 뒤 30초 동안 버튼을 막아 반복 요청 방지
-  const APPS_SUMMARY_KEY = 'myApplicationsSummary';   // manage.js가 저장하는 "지금 할 일" 요약
-  const notifyBtn = document.querySelector('.notify-btn');
-  let sending = false;
-
-  function policyForMail(item) {
-    const p = item.p;
-    return {
-      name: p.plcyNm,
-      dDay: item.period.kind === 'open' ? item.period.dDay : null,
-      period: item.period.kind === 'open' || item.period.kind === 'always' ? item.period.kind : 'unknown',
-      level: item.tier === 'perfect' ? 'ok' : 'check',
-      url: applyUrl(p) || YOUTHCENTER_URL + encodeURIComponent(p.plcyNo),
-    };
-  }
-  function applicationsForMail() {
-    try {
-      const list = JSON.parse(sessionStorage.getItem(APPS_SUMMARY_KEY) || '[]');
-      return Array.isArray(list) ? list.slice(0, 10) : [];
-    } catch (e) { return []; }
-  }
-
-  // 버튼 30초 막기 (남은 시간 표시)
-  function cooldown(seconds) {
-    let left = seconds;
-    notifyBtn.disabled = true;
-    notifyBtn.textContent = '다시 보내기 ' + left + '초';
-    const timer = setInterval(function () {
-      left -= 1;
-      if (left <= 0) {
-        clearInterval(timer);
-        notifyBtn.disabled = false;
-        notifyBtn.textContent = '알림 받기';
-      } else {
-        notifyBtn.textContent = '다시 보내기 ' + left + '초';
-      }
-    }, 1000);
-  }
-
-  $('notify-form').addEventListener('submit', function (e) {
-    e.preventDefault();
-    if (sending || notifyBtn.disabled) return;
-    const input = $('notify-email');
-    const msg = $('notify-msg');
-    const email = input.value.trim();
-    msg.className = 'notify-msg';
-    if (!$('ch-email').checked) {
-      msg.textContent = '알림 받을 방법을 골라 주세요.';
-      msg.classList.add('error');
-      return;
-    }
-    if (!EMAIL_RE.test(email) || email.length > 254) {
-      msg.textContent = '이메일 주소를 다시 확인해 주세요. (예: name@example.com)';
-      msg.classList.add('error');
-      input.focus();
-      return;
-    }
-
-    // 메일에는 안 맞는 조건이 없는 정책(딱 맞아요 + 확인 필요)만. 마감 임박은 접수 기간이 확실한 것만
-    const fits = shown.filter(function (x) { return x.tier === 'perfect' || x.tier === 'check'; });
-    const urgent = fits.filter(function (x) { return x.period.exact && x.period.kind === 'open' && x.period.dDay <= 7; })
-      .slice().sort(function (a, b) { return a.period.dDay - b.period.dDay; }).slice(0, 5);
-    const payload = {
-      email: email,
-      urgentPolicies: urgent.map(policyForMail),
-      topPolicies: fits.filter(function (x) { return x.tier === 'perfect'; }).concat(fits.filter(function (x) { return x.tier === 'check'; })).slice(0, 5).map(policyForMail),
-      applications: applicationsForMail(),
-    };
-
-    sending = true;
-    notifyBtn.disabled = true;
-    notifyBtn.textContent = '보내는 중…';
-    msg.textContent = '';
-    fetch('api/send-alert', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    })
-      .then(function (res) {
-        return res.json().catch(function () { return null; }).then(function (data) { return { status: res.status, data: data }; });
-      })
-      .then(function (r) {
-        if (r.status === 200 && r.data && r.data.ok) {
-          msg.textContent = '메일을 보냈어요! 받은편지함(또는 스팸함)을 확인해 주세요';
-          msg.classList.add('success');
-        } else if (r.status === 404 || r.status === 405 || r.status === 501) {
-          msg.textContent = '메일 서버 기능을 찾지 못했어요. "npm run dev"로 켠 주소(또는 배포 주소)에서 열었는지 확인해 주세요.';
-          msg.classList.add('error');
-        } else {
-          msg.textContent = (r.data && r.data.message) || '메일을 보내지 못했어요. 잠시 후 다시 시도해 주세요.';
-          msg.classList.add('error');
-        }
-      })
-      .catch(function () {
-        msg.textContent = '서버에 연결하지 못했어요. 인터넷 연결을 확인하고 다시 시도해 주세요.';
-        msg.classList.add('error');
-      })
-      .then(function () {
-        sending = false;
-        cooldown(SEND_COOLDOWN);   // 성공·실패와 관계없이 30초 뒤에 다시 보낼 수 있음
-      });
-  });
-
-  // ===== 10. 이벤트 =====
+  // ===== 9. 이벤트 =====
   tabButtons.forEach(function (btn) {
     btn.addEventListener('click', function () {
       currentTab = btn.dataset.tab;
@@ -1244,7 +1139,7 @@
     });
   });
 
-  // ===== 11. 시작: 정책 데이터 불러오기 =====
+  // ===== 10. 시작: 정책 데이터 불러오기 =====
   fetch(DATA_URL)
     .then(function (res) {
       if (!res.ok) throw new Error('HTTP ' + res.status);

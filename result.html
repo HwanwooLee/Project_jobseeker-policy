@@ -23,23 +23,6 @@
       <p id="summary-hidden" class="summary-hidden"></p>
     </section>
 
-    <!-- 알림 신청 (목록 위 고정 카드) -->
-    <section class="notify-card" aria-labelledby="notify-title">
-      <h2 id="notify-title" class="notify-title">마감 전, 그리고 신청 후 할 일까지 알려드릴게요</h2>
-      <form id="notify-form" class="notify-form" novalidate>
-        <label for="notify-email" class="sr-only">이메일</label>
-        <input id="notify-email" type="email" inputmode="email" autocomplete="off" placeholder="이메일 주소 (예: name@example.com)" class="notify-input">
-        <fieldset class="notify-channels">
-          <legend class="sr-only">알림 받을 방법</legend>
-          <label class="channel"><input type="checkbox" id="ch-email" checked> 이메일</label>
-          <label class="channel disabled"><input type="checkbox" disabled> 문자 <span class="soon">준비 중</span></label>
-          <label class="channel disabled"><input type="checkbox" disabled> 카카오톡 <span class="soon">준비 중</span></label>
-        </fieldset>
-        <button type="submit" class="btn btn-primary notify-btn">알림 받기</button>
-      </form>
-      <p id="notify-msg" class="notify-msg" role="status"></p>
-    </section>
-
     <!-- 대분류 탭 -->
     <div class="tabs" role="tablist" aria-label="정책 분야">
       <button type="button" class="tab" role="tab" data-tab="all" aria-selected="true">전체 <span class="tab-count"></span></button>
