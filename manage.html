@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>신청 후 관리 · 놓치지 마!</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <main class="result-wrap manage-wrap">
+
+    <header class="survey-top">
+      <a href="index.html" class="brand">놓치지 마!</a>
+      <a href="result.html" class="link-muted">정책 목록으로</a>
+    </header>
+
+    <h1 class="summary-title">신청 후 관리</h1>
+    <p id="manage-sub" class="summary-hidden">신청한 정책의 다음 할 일을 대신 기억해 드려요.</p>
+
+    <!-- 상태 안내 (불러오는 중 / 오류) -->
+    <p id="load-msg" class="load-msg" role="status">불러오는 중이에요…</p>
+
+    <!-- [신청했어요]로 들어왔을 때: 신청 날짜 입력 → 관리 시작 -->
+    <section id="start-card" class="start-card" hidden aria-labelledby="start-title">
+      <p class="start-label">새로 관리할 정책</p>
+      <h2 id="start-title" class="start-title"></h2>
+      <form id="start-form" class="start-form" novalidate>
+        <div class="start-field">
+          <label for="start-date" class="start-date-label">신청한 날짜</label>
+          <input id="start-date" type="date" class="date-input" required>
+        </div>
+        <div class="start-field grow">
+          <label for="start-email" class="start-date-label">이메일 <span class="optional">(선택)</span></label>
+          <input id="start-email" type="email" inputmode="email" autocomplete="email" class="date-input" placeholder="name@example.com">
+        </div>
+        <div class="start-actions">
+          <button type="submit" id="start-only" class="btn btn-secondary start-btn">관리 시작</button>
+          <button type="submit" id="start-mail" class="btn btn-primary start-btn">관리 메일 받기</button>
+        </div>
+      </form>
+      <p class="sheet-hint">메일로 단계별 할 일과 캘린더 파일(.ics)을 보내 드려요. 파일을 열면 이후 알림은 휴대폰 캘린더가 대신 해 줘요.</p>
+      <p id="start-error" class="form-error" role="alert"></p>
+    </section>
+
+    <!-- 지금 할 일 (가장 급한 1개) -->
+    <section id="now-card" class="now-card" hidden aria-labelledby="now-title">
+      <p class="now-label">지금 할 일</p>
+      <div id="now-body"></div>
+    </section>
+
+    <!-- 정책별 관리: 목록 보기(짧은 카드) / 한 정책 보기(#p=정책번호) -->
+    <a id="back-list" href="#list" class="back-list" hidden>← 관리 중인 정책 전체 보기</a>
+    <h2 id="list-title" class="list-title" hidden></h2>
+    <div id="app-list" class="app-list"></div>
+
+    <section id="empty-card" class="empty-card" hidden>
+      <h2 class="empty-title">아직 관리 중인 정책이 없어요</h2>
+      <p class="muted">결과 화면에서 정책을 고르고 [신청했어요]를 누르면 여기서 다음 할 일을 챙겨 드려요.</p>
+      <a href="result.html" class="btn btn-primary empty-btn">정책 목록 보기</a>
+    </section>
+
+    <!-- 공용 PC 대비 -->
+    <footer class="manage-foot">
+      <button type="button" id="btn-clear" class="btn-danger-line">이 기기에서 내 기록 지우기</button>
+      <p class="data-note">신청 기록과 서류 체크는 이 브라우저에만 저장돼요. 공용 PC라면 다 쓴 뒤 지워 주세요.</p>
+    </footer>
+  </main>
+  <script src="js/manage.js"></script>
+</body>
+</html>

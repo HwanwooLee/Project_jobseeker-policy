@@ -1,0 +1,9 @@
+# 비밀 키 파일 (절대 커밋 금지)
+.env
+
+# Python 캐시
+__pycache__/
+*.pyc
+
+# Node 패키지 (npm install로 다시 받음)
+node_modules/

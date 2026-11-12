@@ -1,0 +1,83 @@
+{
+  "_설명": "신청 이후 단계 데이터. API에는 결과 발표일·이후 의무 일정이 없어서 팀이 공고를 보고 직접 정리함 (PRD 7-5). dateType: exact(정확한 날짜) / approx(예상, weeks=신청 후 약 N주) / none(날짜 없음, 주 1회 확인) / monthly(매월 반복). dateFrom=appliedAt 이면 사용자가 입력한 신청 날짜, customDateKey 가 있으면 사용자가 안내 받은 날짜를 입력했을 때 exact 로 바뀜.",
+  "updatedAt": "2026-11-12",
+  "policies": {
+    "20260710005400113256": {
+      "name": "국민취업지원제도",
+      "matchNames": ["국민취업지원제도"],
+      "source": "https://www.korea.kr/multi/visualNewsView.do?newsId=148941907",
+      "steps": [
+        {
+          "id": "applied",
+          "title": "신청 완료",
+          "dateType": "exact",
+          "dateFrom": "appliedAt"
+        },
+        {
+          "id": "eligibility",
+          "title": "수급자격 결과 확인",
+          "dateType": "none",
+          "note": "고용센터에서 개별 안내",
+          "weeklyCheck": "결과 안내 받으셨나요?",
+          "customDateKey": "resultDate",
+          "source": "https://www.korea.kr/multi/visualNewsView.do?newsId=148941907"
+        },
+        {
+          "id": "plan",
+          "title": "취업활동계획 수립 상담",
+          "dateType": "none",
+          "note": "고용센터 안내에 따라 진행",
+          "source": "https://www.korea.kr/multi/visualNewsView.do?newsId=148941907"
+        },
+        {
+          "id": "monthly-activity",
+          "title": "매월 구직활동 이행·보고",
+          "dateType": "monthly",
+          "note": "매월 최소 2회 이상 구직활동 및 증빙",
+          "warning": "안 하면 해당 주기 수당이 중단되거나 감액될 수 있어요",
+          "source": "https://www.korea.kr/multi/visualNewsView.do?newsId=148941907"
+        },
+        {
+          "id": "allowance",
+          "title": "구직촉진수당 확인",
+          "dateType": "monthly",
+          "note": "Ⅰ유형 월 60만 원, 최대 6개월",
+          "source": "https://www.korea.kr/multi/visualNewsView.do?newsId=148941907"
+        }
+      ]
+    }
+  },
+  "common": {
+    "_설명": "after_steps.json에 없는 정책에 쓰는 공통 단계. 출처는 각 정책의 원문 공고 링크를 씀. onlyIfDocuments=true 인 단계는 정책에 제출 서류 내용이 있을 때만 보임. noteFrom=srngMthdCn 이면 정책의 심사방법 글을 설명으로 보여줌.",
+    "steps": [
+      {
+        "id": "applied",
+        "title": "신청 완료",
+        "dateType": "exact",
+        "dateFrom": "appliedAt"
+      },
+      {
+        "id": "documents",
+        "title": "제출 서류 준비",
+        "dateType": "none",
+        "onlyIfDocuments": true,
+        "customDateKey": "docDeadline",
+        "note": "보완 요청이 오면 안내 받은 기한 안에 다시 내야 해요"
+      },
+      {
+        "id": "result",
+        "title": "결과 발표 확인",
+        "dateType": "none",
+        "weeklyCheck": "결과 안내 받으셨나요?",
+        "customDateKey": "resultDate",
+        "noteFrom": "srngMthdCn"
+      },
+      {
+        "id": "after",
+        "title": "선정 후 안내 사항 확인",
+        "dateType": "none",
+        "note": "선정되면 받은 안내에 따라 다음 할 일을 진행해요"
+      }
+    ]
+  }
+}

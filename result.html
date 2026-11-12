@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>내 맞춤 정책 · 놓치지 마!</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <main class="result-wrap">
+
+    <header class="survey-top">
+      <a href="index.html" class="brand">놓치지 마!</a>
+      <div class="top-links">
+        <a href="survey.html" class="link-muted">조건 다시 입력</a>
+        <!-- 신청 기록이 있을 때만 보임 (js/result.js) -->
+        <a id="btn-manage" href="manage.html" class="manage-pill" hidden>내 신청 관리</a>
+      </div>
+    </header>
+
+    <!-- 요약 -->
+    <section class="result-summary" aria-live="polite">
+      <h1 id="summary-title" class="summary-title">정책을 불러오는 중이에요…</h1>
+      <p id="summary-sub" class="summary-sub"></p>
+      <p id="summary-hidden" class="summary-hidden"></p>
+    </section>
+
+    <!-- 알림 신청 (목록 위 고정 카드) -->
+    <section class="notify-card" aria-labelledby="notify-title">
+      <h2 id="notify-title" class="notify-title">마감 전, 그리고 신청 후 할 일까지 알려드릴게요</h2>
+      <form id="notify-form" class="notify-form" novalidate>
+        <label for="notify-email" class="sr-only">이메일</label>
+        <input id="notify-email" type="email" inputmode="email" autocomplete="email" placeholder="이메일 주소 (예: name@example.com)" class="notify-input">
+        <fieldset class="notify-channels">
+          <legend class="sr-only">알림 받을 방법</legend>
+          <label class="channel"><input type="checkbox" id="ch-email" checked> 이메일</label>
+          <label class="channel disabled"><input type="checkbox" disabled> 문자 <span class="soon">준비 중</span></label>
+          <label class="channel disabled"><input type="checkbox" disabled> 카카오톡 <span class="soon">준비 중</span></label>
+        </fieldset>
+        <button type="submit" class="btn btn-primary notify-btn">알림 받기</button>
+      </form>
+      <p id="notify-msg" class="notify-msg" role="status"></p>
+    </section>
+
+    <!-- 대분류 탭 -->
+    <div class="tabs" role="tablist" aria-label="정책 분야">
+      <button type="button" class="tab" role="tab" data-tab="all" aria-selected="true">전체 <span class="tab-count"></span></button>
+      <button type="button" class="tab" role="tab" data-tab="job" aria-selected="false">일자리 <span class="tab-count"></span></button>
+      <button type="button" class="tab" role="tab" data-tab="edu" aria-selected="false">교육·훈련 <span class="tab-count"></span></button>
+      <button type="button" class="tab" role="tab" data-tab="welfare" aria-selected="false">금융·복지 <span class="tab-count"></span></button>
+    </div>
+
+    <!-- 정책 카드 목록 -->
+    <div id="policy-list" class="policy-list" role="tabpanel"></div>
+    <p id="list-empty" class="list-empty" hidden>이 분야에서는 조건에 맞는 정책이 없어요.</p>
+    <div class="more-row">
+      <button type="button" id="btn-more" class="btn btn-secondary more-btn" hidden>더 보기</button>
+    </div>
+
+    <p id="data-note" class="data-note"></p>
+  </main>
+
+  <!-- 정책 상세 패널 (PC: 오른쪽에서 열림 / 모바일: 아래에서 올라오는 시트) — 내용은 js/result.js가 채움 -->
+  <div id="sheet-backdrop" class="sheet-backdrop" hidden></div>
+  <aside id="sheet" class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-title" hidden>
+    <div class="sheet-grip" aria-hidden="true"></div>
+    <header class="sheet-head">
+      <div id="sheet-badges" class="pcard-top"></div>
+      <h2 id="sheet-title" class="sheet-title"></h2>
+      <p id="sheet-desc" class="sheet-desc"></p>
+      <button type="button" id="sheet-close" class="sheet-close" aria-label="닫기">닫기</button>
+    </header>
+    <div id="sheet-body" class="sheet-body"></div>
+    <footer class="sheet-foot">
+      <a id="sheet-apply" class="btn-line sheet-btn" target="_blank" rel="noopener noreferrer">신청하러 가기</a>
+      <a id="sheet-done" class="btn-solid sheet-btn">신청했어요 → 관리 시작</a>
+    </footer>
+  </aside>
+
+  <script src="js/result.js"></script>
+</body>
+</html>

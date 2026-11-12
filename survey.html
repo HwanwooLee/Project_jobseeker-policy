@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>내 조건 입력 · 놓치지 마!</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <main class="survey-wrap">
+
+    <header class="survey-top">
+      <a href="index.html" class="brand">놓치지 마!</a>
+      <span class="muted small">1분이면 끝나요</span>
+    </header>
+
+    <!-- 진행 바 -->
+    <div class="progress-head">
+      <span>받을 수 있는 정책 찾기</span>
+      <span><strong id="step-now">1</strong> / <span id="step-total">8</span></span>
+    </div>
+    <div class="progress" role="progressbar" aria-valuemin="1" aria-valuemax="8" aria-valuenow="1" aria-label="설문 진행">
+      <div class="progress-fill" id="progress-fill"></div>
+    </div>
+
+    <!-- 질문 화면은 js/survey.js의 QUESTIONS 목록으로 만들어짐 -->
+    <div class="questions" id="questions"></div>
+
+    <p id="form-error" class="form-error" role="alert"></p>
+
+    <nav class="survey-nav">
+      <button type="button" id="btn-prev" class="btn btn-secondary invisible">이전</button>
+      <button type="button" id="btn-next" class="btn btn-primary" disabled>다음</button>
+    </nav>
+    <p class="privacy">입력한 내용은 이 창을 닫으면 사라져요.</p>
+
+  </main>
+  <script src="js/survey.js"></script>
+</body>
+</html>

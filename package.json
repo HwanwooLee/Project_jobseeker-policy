@@ -1,0 +1,11 @@
+{
+  "name": "jobseeker-policy",
+  "private": true,
+  "description": "놓치지 마! — 취준생 정책 매니저 (시연용)",
+  "scripts": {
+    "dev": "node dev-server.js"
+  },
+  "dependencies": {
+    "nodemailer": "10.3.1"
+  }
+}
