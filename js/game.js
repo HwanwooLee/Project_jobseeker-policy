@@ -283,7 +283,7 @@
   let audio = null;
   let master = null;
   let soundOn = true;
-  try { soundOn = localStorage.getItem('game-sound') !== 'off'; } catch (e) { /* 저장 불가 환경이면 기본값(켜짐) */ }
+  try { soundOn = sessionStorage.getItem('game-sound') !== 'off'; } catch (e) { /* 저장 불가 환경이면 기본값(켜짐) */ }
 
   function ensureAudio() {
     if (!audio) {
@@ -754,7 +754,7 @@
   document.getElementById('btn-retry').addEventListener('click', startGame);
   soundBtn.addEventListener('click', function () {
     soundOn = !soundOn;
-    try { localStorage.setItem('game-sound', soundOn ? 'on' : 'off'); } catch (e) { /* 무시 */ }
+    try { sessionStorage.setItem('game-sound', soundOn ? 'on' : 'off'); } catch (e) { /* 무시 */ }
     renderSoundButton();
     soundBtn.blur();
     if (soundOn) beep(880, 0.08);

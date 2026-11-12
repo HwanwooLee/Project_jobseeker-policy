@@ -3,8 +3,12 @@
    - result.html [신청했어요] → manage.html?plcyNo=정책번호
    - 신청 날짜 입력 → 단계 체크리스트(세로 타임라인) 생성
    - 신청한 정책 여러 개를 함께 관리, "지금 할 일" 1개를 맨 위에 크게
-   - 저장: localStorage "myApplications" (며칠 뒤에도 남아야 해서 localStorage)
-           제출 서류 체크는 상세 패널과 같은 키 "docChecklist:정책번호"
+   - 저장 원칙: 이 기기에는 아무것도 영구 저장하지 않음
+       · 관리 기록은 sessionStorage "myApplications" (탭을 닫으면 사라짐)
+       · 개인 기록은 본인 메일의 [관리 화면 열기] 링크(d+sig)로만 다시 열림 → api/restore-plan.js
+       · 이메일 주소는 어디에도 저장하지 않음 (입력칸도 미리 채우지 않음)
+       · 화면에서 바꾼 내용은 [관리 메일 다시 받기]를 눌러야 새 메일 링크에 담김
+     제출 서류 체크는 상세 패널과 같은 키 "docChecklist:정책번호" (sessionStorage)
    ※ data/*.json을 fetch로 읽기 때문에 로컬 서버(http://localhost)로 열어야 함
    ========================================================= */
 (function () {
@@ -54,32 +58,37 @@
     return n > 0 ? 'D-' + n : (-n) + '일 지남';
   }
 
-  // ===== 3. 저장 / 불러오기 =====
+  // ===== 3. 저장 / 불러오기 (sessionStorage — 이 탭에서만, 탭을 닫으면 사라짐) =====
   // myApplications = { version: 1, items: { 정책번호: {
-  //   plcyNo, plcyNm, appliedAt, startedAt,
+  //   plcyNo, plcyNm, appliedAt, startedAt, snapshot,
   //   steps: { 단계id: { done, doneAt, doneMonths: ["2026-11"], lastCheckedAt } },
-  //   customDates: { docDeadline: "YYYY-MM-DD", resultDate: "YYYY-MM-DD" } } } }
+  //   customDates: { docDeadline: "YYYY-MM-DD", resultDate: "YYYY-MM-DD" },
+  //   changed: 마지막 메일 이후 바뀐 내용이 있는지, mailedAt: 이 탭에서 관리 메일을 보낸 시각 } } }
   function loadApps() {
     try {
-      const data = JSON.parse(localStorage.getItem(APPS_KEY) || 'null');
+      const data = JSON.parse(sessionStorage.getItem(APPS_KEY) || 'null');
       if (data && data.items && typeof data.items === 'object') return data;
     } catch (e) { /* 깨진 값이면 새로 시작 */ }
     return { version: 1, items: {} };
   }
   function saveApps() {
     try {
-      localStorage.setItem(APPS_KEY, JSON.stringify(apps));
+      sessionStorage.setItem(APPS_KEY, JSON.stringify(apps));
       return true;
     } catch (e) {
       showLoadMsg('브라우저 저장 기능이 막혀 있어서 기록을 저장하지 못했어요.', true);
       return false;
     }
   }
+  // 화면에서 바꾼 내용이 있음 → [관리 메일 다시 받기]를 눌러야 메일 링크에 담긴다는 안내를 띄움
+  function markChanged(app) {
+    if (app) app.changed = true;
+  }
   function loadDocs(plcyNo) {
-    try { return JSON.parse(localStorage.getItem(DOCS_KEY_PREFIX + plcyNo) || '{}') || {}; } catch (e) { return {}; }
+    try { return JSON.parse(sessionStorage.getItem(DOCS_KEY_PREFIX + plcyNo) || '{}') || {}; } catch (e) { return {}; }
   }
   function saveDocs(plcyNo, state) {
-    try { localStorage.setItem(DOCS_KEY_PREFIX + plcyNo, JSON.stringify(state)); } catch (e) { /* 무시 */ }
+    try { sessionStorage.setItem(DOCS_KEY_PREFIX + plcyNo, JSON.stringify(state)); } catch (e) { /* 무시 */ }
   }
 
   let apps = loadApps();
@@ -97,10 +106,26 @@
     s.savedAt = ymd(today());
     return s;
   }
-  // 신청할 때 저장한 정보가 먼저, 없으면 최신 목록
+  // 신청할 때 저장한 정보가 먼저, 스냅샷에 없는 항목(메일 링크로 복원한 경우 제출 서류 등)은 최신 목록에서 채움
   function policyOf(no) {
     const app = apps.items[no];
-    return (app && app.snapshot) || policyByNo[no] || null;
+    const snap = app && app.snapshot, latest = policyByNo[no];
+    if (snap && latest) return Object.assign({}, latest, snap);
+    return snap || latest || null;
+  }
+
+  // 메일의 [관리 화면 열기] 복원 링크에 넣을 관리 기록 (이메일 주소는 빼고 보냄 — 서버에서도 허용 항목만 씀)
+  const LINK_SNAPSHOT_FIELDS = ['plcyNm', 'operInstCdNm', 'aplyUrlAddr', 'refUrlAddr1', 'plcyExplnCn', 'aplyYmd', 'status', 'aplyEndDate'];
+  function recordForLink(app) {
+    const snap = {};
+    const p = policyOf(app.plcyNo) || {};
+    LINK_SNAPSHOT_FIELDS.forEach(function (k) { if (p[k]) snap[k] = p[k]; });
+    return {
+      plcyNo: app.plcyNo, plcyNm: app.plcyNm, appliedAt: app.appliedAt,
+      steps: app.steps || {}, customDates: app.customDates || {}, stepDates: app.stepDates || {},
+      dateEvidence: app.dateEvidence || {}, extraSteps: app.extraSteps || [], snapshot: snap,
+      docChecked: Object.keys(loadDocs(app.plcyNo).checked || {}),   // 제출 서류 체크 (링크가 길면 서버가 가장 먼저 뺌)
+    };
   }
 
   // ===== 4. 글 도구 =====
@@ -284,11 +309,13 @@
       st.done = done;
       st.doneAt = done ? new Date().toISOString() : null;
     }
+    markChanged(app);
     saveApps();
     render();
   }
   function markWeeklyChecked(plcyNo, step) {
     stepState(apps.items[plcyNo], step.id).lastCheckedAt = ymd(today());
+    markChanged(apps.items[plcyNo]);
     saveApps();
     render();
   }
@@ -466,6 +493,7 @@
         del.addEventListener('click', function () {
           app.extraSteps = (app.extraSteps || []).filter(function (x) { return x.id !== s.id; });
           if (app.steps) delete app.steps[s.id];
+          markChanged(app);
           saveApps();
           render();
         });
@@ -542,6 +570,7 @@
         app.customDates = app.customDates || {};
         if (input.value) app.customDates[c.key] = input.value; else delete app.customDates[c.key];
         if (app.dateEvidence) delete app.dateEvidence[c.key];   // 직접 고쳤으면 AI 근거는 떼어냄
+        markChanged(app);
         saveApps();
         render();
       });
@@ -579,6 +608,8 @@
         state.updatedAt = new Date().toISOString();
         saveDocs(no, state);
         update();
+        // 서류 체크도 메일 링크에 담기므로 "바꾼 내용 있음" 표시
+        if (apps.items[no] && !apps.items[no].changed) { markChanged(apps.items[no]); saveApps(); render(); }
       });
       const label = el('label', null, d);
       label.htmlFor = box.id;
@@ -595,8 +626,9 @@
   }
 
   // --- 📧 관리 메일 + 캘린더 추가 버튼 → /api/send-plan ---
-  // full: 전체 단계 / update: 안내 문자에서 새로 저장한 일정만
-  // 메일 주소는 다시 보내기·새 일정 발송을 위해 이 기기의 신청 기록에만 저장 ([내 기록 지우기]로 삭제)
+  // full: 전체 단계 + 지금 화면 상태가 담긴 새 [관리 화면 열기] 링크
+  // 메일 주소는 어디에도 저장하지 않음 (보낼 때마다 직접 입력)
+  const CHANGED_NOTICE = '바꾼 내용은 [관리 메일 다시 받기]를 눌러야 메일 링크에 저장돼요.';
   const EMAIL_RE = /^[^\s@<>"',;:()\[\]\\]+@[^\s@<>"',;:()\[\]\\]+\.[A-Za-z]{2,}$/;
   const MAIL_COOLDOWN = 30;
   const mailState = {};   // 정책번호 → { sending, msg, error, cooldownLeft }
@@ -636,14 +668,16 @@
     return fetch('api/send-plan', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: email, mode: mode, plan: { policyName: app.plcyNm, plcyNo: no, appliedAt: app.appliedAt }, steps: steps }),
+      body: JSON.stringify({ email: email, mode: mode, plan: { policyName: app.plcyNm, plcyNo: no, appliedAt: app.appliedAt }, steps: steps, record: recordForLink(app) }),
     })
       .then(function (res) {
         return res.json().catch(function () { return null; }).then(function (data) { return { status: res.status, data: data }; });
       })
       .then(function (r) {
         if (r.status === 200 && r.data && r.data.ok) {
-          app.email = email;           // 다음에 다시 보낼 때 쓰려고 기억
+          // 이메일 주소는 저장하지 않음. 바뀐 내용이 새 링크에 담겼으니 "바뀜" 표시를 지움
+          if (mode === 'full') { app.changed = false; app.mailedAt = new Date().toISOString(); }
+          if (app.linkEmail) app.linkEmail = email;   // 메일 링크로 연 탭: 새 링크를 받은 주소로 바꿔 둠 (이 탭에서만)
           saveApps();
           return { ok: true, message: '메일을 보냈어요! 메일의 ' + (r.data.calendarButton ? '[📱 내 폰 캘린더에 추가] 버튼을' : '구글 캘린더 링크를') +
             ' 누르면 일정 ' + r.data.events + '개가 캘린더에 들어가요. (스팸함도 확인해 주세요)' };
@@ -669,7 +703,9 @@
     const st = mailState[no] = mailState[no] || {};
     const sec = el('section', 'sheet-section');
     sec.appendChild(sectionTitle('📧', '관리 메일 · 캘린더'));
-    sec.appendChild(el('p', 'sheet-hint top', '단계별 할 일과 [📱 내 폰 캘린더에 추가] 버튼을 메일로 보내 드려요. 캘린더에 넣으면 날짜 있는 일정은 하루 전, 매월 할 일은 매월 1일, 날짜 미정 단계는 매주 월요일에 캘린더가 알려 줘요.'));
+    sec.appendChild(el('p', 'sheet-hint top', '단계별 할 일, [📱 내 폰 캘린더에 추가] 버튼, 이 관리 화면을 다시 여는 [관리 화면 열기] 링크를 메일로 보내 드려요. 캘린더에 넣으면 날짜 있는 일정은 하루 전, 매월 할 일은 매월 1일, 날짜 미정 단계는 매주 월요일에 캘린더가 알려 줘요.'));
+    // 탭을 닫으면 사라진다는 안내 (바뀐 내용이 있으면 강조)
+    sec.appendChild(el('p', app.changed ? 'changed-notice' : 'sheet-hint top', CHANGED_NOTICE + ' 이 탭을 닫으면 화면에서 바꾼 내용은 사라져요.'));
     const row = el('div', 'mail-row');
     const id = 'mail-' + no;
     const label = el('label', 'sr-only', '이메일');
@@ -678,18 +714,19 @@
     input.type = 'email';
     input.id = id;
     input.placeholder = 'name@example.com';
-    input.autocomplete = 'email';
-    input.value = st.draft !== undefined ? st.draft : (app.email || '');
+    input.autocomplete = 'off';                 // 브라우저가 예전 주소를 채워 넣지 않게
+    // 메일 링크로 연 경우에만 링크 속 이메일(암호화돼 있던 주소)로 채움. 링크 없이 들어오면 빈칸
+    input.value = st.draft !== undefined ? st.draft : (app.linkEmail || '');
     input.addEventListener('input', function () { st.draft = input.value; });
     const btn = el('button', 'btn btn-primary mail-btn',
-      st.sending ? '보내는 중…' : (st.cooldownLeft ? '다시 보내기 ' + st.cooldownLeft + '초' : (app.email ? '관리 메일 다시 받기' : '관리 메일 받기')));
+      st.sending ? '보내는 중…' : (st.cooldownLeft ? '다시 보내기 ' + st.cooldownLeft + '초' : (app.mailedAt || app.restoredAt ? '관리 메일 다시 받기' : '관리 메일 받기')));
     btn.type = 'button';
     btn.id = 'mail-btn-' + no;
     btn.disabled = !!st.sending || !!st.cooldownLeft;
     btn.addEventListener('click', function () {
       const email = input.value.trim();
       if (!EMAIL_RE.test(email)) { st.error = '이메일 주소를 다시 확인해 주세요. (예: name@example.com)'; st.msg = ''; render(); return; }
-      st.draft = undefined;
+      st.draft = undefined;                     // 보낸 뒤: 링크로 연 탭이면 그 주소, 아니면 빈칸
       sendPlan(app, 'full', email);
     });
     row.append(label, input, btn);
@@ -726,6 +763,7 @@
       const newId = 'ai-' + Date.now().toString(36);
       app.extraSteps = app.extraSteps || [];
       app.extraSteps.push({ id: newId, title: item.step.slice(0, 40), date: item.date, evidence: item.evidence });
+      markChanged(app);
       saveApps();
       return newId;
     } else {
@@ -740,6 +778,7 @@
         app.stepDates[target.id] = item.date;
         app.dateEvidence[target.id] = item.evidence;
       }
+      markChanged(app);
       saveApps();
       return target.id;
     }
@@ -832,6 +871,15 @@
           box.appendChild(el('p', 'ai-saved', '✓ 저장했어요'));
           const note = st.mailNotes && st.mailNotes[i];
           if (note) box.appendChild(el('p', note.ok ? 'notify-msg success' : 'form-error', note.text));
+          // 메일 링크로 연 탭(이메일을 알고 있음)이면 바로 다시 받을 수 있는 버튼 — 자동 발송은 하지 않음
+          if (note && note.offer && app.linkEmail) {
+            const ms = mailState[app.plcyNo] || {};
+            const again = el('button', 'mini-btn primary', ms.sending ? '보내는 중…' : (ms.cooldownLeft ? '다시 보내기 ' + ms.cooldownLeft + '초' : '[관리 메일 다시 받기] ' + app.linkEmail));
+            again.type = 'button';
+            again.disabled = !!ms.sending || !!ms.cooldownLeft;
+            again.addEventListener('click', function () { note.offer = false; sendPlan(app, 'full', app.linkEmail); });
+            box.appendChild(again);
+          }
         } else {
           const row = el('div', 'ai-save-row');
           const selId = 'ai-target-' + app.plcyNo + '-' + i;
@@ -850,16 +898,8 @@
             const savedId = saveAiItem(app, steps, item, sel.value);
             st.saved[i] = true;
             st.mailNotes = st.mailNotes || {};
-            // 관리 메일을 받은 적이 있으면, 이 일정만 담은 캘린더 추가 메일을 다시 보냄
-            if (savedId && app.email) {
-              st.mailNotes[i] = { ok: true, text: app.email + '로 이 일정의 캘린더 추가 메일을 보내는 중…' };
-              sendPlan(app, 'update', app.email, [savedId]).then(function (r) {
-                st.mailNotes[i] = { ok: r.ok, text: r.ok ? '이 일정만 담은 캘린더 추가 메일을 ' + app.email + '로 보냈어요.' : r.message };
-                render();
-              });
-            } else if (savedId) {
-              st.mailNotes[i] = { ok: true, text: '위 "관리 메일 · 캘린더"에서 메일을 받으면 이 일정도 캘린더에 함께 들어가요.' };
-            }
+            // 이메일 주소를 저장하지 않으므로 자동 발송은 하지 않음 → 다시 받기를 안내
+            if (savedId) st.mailNotes[i] = { ok: true, offer: !!app.linkEmail, text: CHANGED_NOTICE + ' 새 메일의 캘린더 버튼에 이 일정도 들어가요.' };
             render();
           });
           row.append(label, sel, save);
@@ -884,8 +924,8 @@
       return { name: app.plcyNm, todo: next ? next.title : '', nextDate: dates[0] || '' };
     });
     try {
-      if (list.length) localStorage.setItem(SUMMARY_KEY, JSON.stringify(list));
-      else localStorage.removeItem(SUMMARY_KEY);
+      if (list.length) sessionStorage.setItem(SUMMARY_KEY, JSON.stringify(list));
+      else sessionStorage.removeItem(SUMMARY_KEY);
     } catch (e) { /* 무시 */ }
   }
 
@@ -931,7 +971,7 @@
 
   function setupStart() {
     if (!incomingNo) return;
-    if (apps.items[incomingNo]) {         // 이미 관리 중이면 그 정책 관리 화면으로
+    if (apps.items[incomingNo]) {         // 이 탭에서 이미 관리 중이면 그 정책 관리 화면으로
       openDetail(incomingNo, true);
       return;
     }
@@ -979,19 +1019,50 @@
     if (history.replaceState) history.replaceState(null, '', location.pathname);
   }
 
-  // ===== 9. 기록 지우기 (공용 PC 대비) =====
-  $('btn-clear').addEventListener('click', function () {
-    if (!confirm('이 기기에 저장된 신청 기록과 제출 서류 체크를 모두 지울까요? 되돌릴 수 없어요.')) return;
-    try {
-      localStorage.removeItem(APPS_KEY);
-      Object.keys(localStorage).forEach(function (k) { if (k.indexOf(DOCS_KEY_PREFIX) === 0) localStorage.removeItem(k); });
-    } catch (e) { /* 무시 */ }
-    apps = { version: 1, items: {} };
-    $('start-card').hidden = true;
-    if (history.replaceState) history.replaceState(null, '', location.pathname);
-    render();
-    showLoadMsg('이 기기에 저장된 기록을 모두 지웠어요.', false);
-  });
+  // ===== 8-1. 메일의 [관리 화면 열기]로 들어왔을 때: ?d=…&sig=… → 관리 기록 되살리기 =====
+  // - 서명 검사(api/restore-plan) 후 항상 링크 내용 기준으로 표시 (기기에 남은 기록이 없으니 링크가 기준)
+  // - sessionStorage에만 넣음 (탭을 닫으면 사라짐)
+  // - 끝나면 주소창에서 d·sig를 지움 (주소를 복사·공유해도 기록이 따라가지 않게)
+  const linkD = params.get('d');
+  const linkSig = params.get('sig');
+  function restoreFromLink() {
+    if (!linkD || !linkSig) return Promise.resolve();
+    return fetch('api/restore-plan', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ d: linkD, sig: linkSig }),
+    })
+      .then(function (res) {
+        return res.json().catch(function () { return null; }).then(function (data) { return { status: res.status, data: data }; });
+      })
+      .then(function (r) {
+        if (r.status === 200 && r.data && r.data.ok && r.data.record) {
+          const rec = r.data.record;
+          const no = rec.plcyNo;
+          rec.restoredAt = new Date().toISOString();   // 메일 링크에서 되살린 기록이라는 표시
+          rec.changed = false;
+          // 제출 서류 체크 → 상세 패널·관리 화면이 함께 쓰는 서류 체크 저장소(sessionStorage)로
+          if (Array.isArray(rec.docChecked)) {
+            const checked = {};
+            rec.docChecked.forEach(function (name) { checked[name] = true; });
+            saveDocs(no, { checked: checked, updatedAt: new Date().toISOString() });
+            delete rec.docChecked;
+          }
+          // 링크에 암호화돼 있던 이메일 → 이 탭의 기록에만 (입력칸 채우기용, 탭을 닫으면 사라짐)
+          if (r.data.email) rec.linkEmail = r.data.email;
+          apps.items[no] = rec;                         // 항상 링크 내용 기준
+          if (saveApps()) showLoadMsg('메일 링크에서 관리 기록을 불러왔어요', false);
+          if (history.replaceState) history.replaceState(null, '', location.pathname + '#p=' + no);
+        } else {
+          clearQuery();
+          showLoadMsg((r.data && r.data.message) || '메일 링크에서 관리 기록을 불러오지 못했어요. 메일의 [관리 화면 열기]를 그대로 눌러 주세요.', true);
+        }
+      })
+      .catch(function () {
+        clearQuery();
+        showLoadMsg('서버에 연결하지 못해서 관리 기록을 불러오지 못했어요. 잠시 후 메일의 링크를 다시 눌러 주세요.', true);
+      });
+  }
 
   // ===== 10. 시작: 정책 데이터 + 단계 데이터 불러오기 =====
   Promise.all([
@@ -1008,10 +1079,13 @@
     });
     if (filled) saveApps();
     showLoadMsg('');
-    setupStart();
-    render();
+    return restoreFromLink().then(function () {
+      setupStart();
+      render();
+    });
   }).catch(function () {
     showLoadMsg('정책 정보를 불러오지 못했어요. 파일을 더블클릭해서 열었다면 로컬 서버(http://localhost)로 열어 주세요.', true);
-    render();   // 저장된 기록은 정책 정보 없이도 보여줌
+    // 정책 목록이 없어도 메일 링크 복원과 저장된 기록은 보여줌 (링크에 스냅샷이 들어 있음)
+    restoreFromLink().then(render);
   });
 })();

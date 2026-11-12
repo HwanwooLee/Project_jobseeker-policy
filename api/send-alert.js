@@ -118,10 +118,13 @@ function buildHtml(urgent, top, apps) {
     '<tr><td style="padding:22px 24px 24px;">' +
     '<div style="font-size:12px;color:' + C.muted + ';line-height:1.7;border-top:1px solid ' + C.line + ';padding-top:14px;">' +
     '정보는 온통청년 공공데이터 기준이에요. 신청 전 공식 공고를 확인하세요.<br>' +
-    '시연용 서비스라 이 메일은 1회만 발송돼요.' +
+    '시연용 서비스라 이 메일은 1회만 발송돼요.<br>' +
+    '<b style="color:' + C.text + ';">' + L.escapeHtml(PRIVATE_LINK_NOTE) + '</b>' +
     '</div></td></tr>' +
     '</table></td></tr></table></body></html>';
 }
+
+const PRIVATE_LINK_NOTE = '이 메일의 링크는 본인만 사용해 주세요.';
 
 // 메일 앱이 HTML을 못 보여줄 때를 위한 글 버전
 function buildText(urgent, top, apps) {
@@ -131,6 +134,7 @@ function buildText(urgent, top, apps) {
   if (apps.length) { lines.push('■ 신청한 정책의 지금 할 일'); apps.forEach(function (a) { lines.push('- ' + a.name + ': ' + (a.todo || '다음 안내 기다리는 중') + (a.nextDate ? ' (' + a.nextDate + ')' : '')); }); lines.push(''); }
   lines.push('정보는 온통청년 공공데이터 기준이에요. 신청 전 공식 공고를 확인하세요.');
   lines.push('시연용 서비스라 이 메일은 1회만 발송돼요.');
+  lines.push('', PRIVATE_LINK_NOTE);
   return lines.join('\n');
 }
 

@@ -4,6 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>놓치지 마!</title>
+<!-- 예전 버전이 이 기기에 남긴 기록 지우기 (이제 기기에는 저장하지 않음) -->
+<script src="js/cleanup.js"></script>
 <style>
 /* ===== 팔레트 (이 색만 사용) ===== */
 :root {
@@ -139,32 +141,6 @@ body {
 /* 게임 중에만 보임. 자리(크기)는 유지해서 HUD 위치 계산에 쓰임 */
 #btn-policy.off { visibility: hidden; opacity: 0; pointer-events: none; }
 
-/* ===== 시작·결과 화면 [내 신청 관리 (N)] — [바로 정책 보기]와 같은 자리, 게임 중이 아닐 때만 ===== */
-#btn-manage {
-  position: absolute;
-  top: clamp(6px, calc(var(--u) * 1.4), 18px);
-  right: calc(clamp(6px, calc(var(--u) * 1.4), 18px) + clamp(32px, calc(var(--u) * 4.6), 58px) + clamp(6px, calc(var(--u) * 0.8), 10px));
-  height: clamp(32px, calc(var(--u) * 4.6), 58px);
-  display: flex;
-  align-items: center;
-  padding: 0 0.95em;
-  font-size: clamp(11px, calc(var(--u) * 1.45), 18px);
-  font-weight: 900;
-  color: var(--line);
-  background: var(--sky2);
-  border: 3px solid var(--line);
-  border-radius: 999px;
-  box-shadow: 0 3px 0 var(--line);
-  text-decoration: none;
-  white-space: nowrap;
-  z-index: 8;
-  touch-action: manipulation;
-  transition: transform 0.12s cubic-bezier(0.2, 0.8, 0.2, 1), box-shadow 0.12s cubic-bezier(0.2, 0.8, 0.2, 1);
-}
-#btn-manage:hover { transform: translateY(-2px); }
-#btn-manage:active { transform: translateY(3px); box-shadow: 0 0 0 var(--line); }
-#btn-manage:focus-visible { outline: 4px solid var(--point); outline-offset: 3px; }
-#btn-manage[hidden] { display: none; }   /* display:flex가 hidden을 덮어쓰지 않게 */
 
 /* ===== 화면 위에 뜨는 패널 (시작 / 결과) ===== */
 .overlay {
@@ -407,9 +383,6 @@ body {
   <!-- 게임 중에도 설문으로 바로 가기 -->
   <a id="btn-policy" class="off" href="survey.html">바로 정책 보기 →</a>
 
-  <!-- 신청 기록이 있을 때만: 설문 없이 바로 관리 화면으로 -->
-  <a id="btn-manage" href="manage.html" hidden>내 신청 관리</a>
-
   <!-- 시작 화면 -->
   <section id="screen-start" class="overlay">
     <div class="overlay-inner">
@@ -586,17 +559,17 @@ const view = {
   ui: 1,         // 작은 화면에서 HUD를 키우는 배율
 };
 
-// 저장되는 값 (최고 점수, 소리)
+// 저장되는 값 (최고 점수, 소리) — sessionStorage: 이 탭에서만 기억하고 탭을 닫으면 사라짐 (기기에 남기지 않음)
 const save = { best: 0, sound: true };
 try {
-  save.best = Number(localStorage.getItem(STORAGE_BEST)) || 0;
-  save.sound = localStorage.getItem(STORAGE_SOUND) !== 'off';
+  save.best = Number(sessionStorage.getItem(STORAGE_BEST)) || 0;
+  save.sound = sessionStorage.getItem(STORAGE_SOUND) !== 'off';
 } catch (e) { /* 저장소를 못 쓰는 환경이면 기본값 사용 */ }
 
 function storeSave() {
   try {
-    localStorage.setItem(STORAGE_BEST, String(save.best));
-    localStorage.setItem(STORAGE_SOUND, save.sound ? 'on' : 'off');
+    sessionStorage.setItem(STORAGE_BEST, String(save.best));
+    sessionStorage.setItem(STORAGE_SOUND, save.sound ? 'on' : 'off');
   } catch (e) { /* 무시 */ }
 }
 
@@ -2028,24 +2001,11 @@ const screenResult = document.getElementById('screen-result');
 const pauseBadge = document.getElementById('pause-badge');
 const btnSound = document.getElementById('btn-sound');
 const btnPolicy = document.getElementById('btn-policy');
-const btnManage = document.getElementById('btn-manage');
 
-// 관리 중인 정책 수 (manage.js가 localStorage "myApplications"에 저장)
-function managedCount() {
-  try {
-    const data = JSON.parse(localStorage.getItem('myApplications') || 'null');
-    return data && data.items ? Object.keys(data.items).length : 0;
-  } catch (e) { return 0; }
-}
-// [바로 정책 보기 →]는 게임 중에만, [내 신청 관리 (N)]은 게임 중이 아닐 때 + 기록이 있을 때만
+// [바로 정책 보기 →]는 게임 중에만 보이게
 function setPolicyButton(visible) {
   btnPolicy.classList.toggle('off', !visible);
-  const n = visible ? 0 : managedCount();
-  btnManage.hidden = n === 0;
-  btnManage.textContent = '내 신청 관리 (' + n + ')';
 }
-// 관리 화면에서 뒤로 가기로 돌아왔을 때 개수 다시 세기
-window.addEventListener('pageshow', function () { setPolicyButton(game.mode === 'play'); });
 // 버튼을 누를 때 점프가 같이 눌리지 않게: 누르는 순간 이벤트를 여기서 멈춤 (모바일 탭 포함)
 ['pointerdown', 'touchstart', 'mousedown'].forEach(function (type) {
   btnPolicy.addEventListener(type, function (e) {

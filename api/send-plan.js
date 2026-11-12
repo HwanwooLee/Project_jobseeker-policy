@@ -1,7 +1,8 @@
 /* =========================================================
    POST /api/send-plan — 신청 후 관리 메일 + 캘린더 추가 버튼 (첨부 파일 없음)
    받는 값: { email, mode: "full" | "update", plan: { policyName, plcyNo, appliedAt },
-            steps: [{ id, title, type: "exact"|"approx"|"none"|"monthly", date, done, note, warning, evidence, sourceUrl }] }
+            steps: [{ id, title, type: "exact"|"approx"|"none"|"monthly", date, done, note, warning, evidence, sourceUrl }],
+            record: 관리 기록(복원 링크용, api/_plan.js가 허용한 항목만 씀 — 이메일·설문 답 없음) }
      full   : 전체 단계 타임라인 + 모든 일정
      update : 안내 문자에서 새로 저장한 일정만
    메일 맨 위 [📱 내 폰 캘린더에 추가] → /api/add-calendar (서명된 링크, add-calendar.js)
@@ -16,13 +17,16 @@
 const nodemailer = require('nodemailer');
 const L = require('./_lib');
 const ICS = require('./_ics');
+const PLAN = require('./_plan');   // [관리 화면 열기] 복원 링크 (다른 브라우저에서도 관리 기록이 열리게)
 
 // ===== 1. 설정 =====
 const MAX_BODY_BYTES = 24 * 1024;
 const SAME_EMAIL_WAIT_MS = 30 * 1000;   // 같은 주소·같은 종류 메일은 30초에 한 번
 const SAME_IP_WAIT_MS = 10 * 1000;
 const LINK_WARN_CHARS = 2000;            // 이보다 긴 링크는 일부 메일 앱에서 잘릴 수 있음
-const BUTTON_HINT = "누르면 사파리(안드로이드는 크롬)로 넘어가요. 거기서 '모두 추가'를 눌러 주세요.";
+// 링크에 관리 기록·(암호화된) 이메일이 들어 있어서, 다른 사람에게 전달하지 않도록 안내
+const PRIVATE_LINK_NOTE = '이 메일의 링크는 본인만 사용해 주세요.';
+const BUTTON_HINT ="누르면 사파리(안드로이드는 크롬)로 넘어가요. 거기서 '모두 추가'를 눌러 주세요.";
 
 const C = {
   text: '#1E2340', muted: '#5d6280', line: '#e3e5ef', accent: '#2F6BFF', soft: '#eef3ff',
@@ -90,9 +94,11 @@ function buildHtml(plan, steps, mode, icsCount, today, calLink) {
   const intro = mode === 'update'
     ? '안내 문자에서 찾아 저장한 일정이에요.'
     : (plan.appliedAt ? prettyDate(plan.appliedAt) + '에 신청한 정책의 다음 단계예요.' : '신청한 정책의 다음 단계예요.');
-  const manageBtn = plan.manageUrl
-    ? '<tr><td style="padding:18px 24px 0;">' + link('관리 화면 열기 →', plan.manageUrl, 14) +
-      '<div style="font-size:12px;color:' + C.muted + ';margin-top:4px;">체크 기록은 처음 관리를 시작한 기기·브라우저에 저장돼 있어요.</div></td></tr>'
+  // 복원 링크: 다른 브라우저에서 열어도 이 메일 시점의 관리 기록이 되살아남
+  const openUrl = plan.manageLink || plan.manageUrl;
+  const manageBtn = openUrl
+    ? '<tr><td style="padding:18px 24px 0;">' + link('관리 화면 열기 →', openUrl, 14) +
+      '<div style="font-size:12px;color:' + C.muted + ';margin-top:4px;">' + (plan.manageLink ? '내 관리 기록은 이 링크로만 열려요. 다른 폰·브라우저에서 열어도 이 메일을 보낸 때의 기록이 그대로 열려요. 화면에서 바꾼 내용은 [관리 메일 다시 받기]로 새 메일을 받아야 저장돼요.' : '이 메일에는 관리 기록을 담지 못했어요. 관리 화면에서 다시 시작해 주세요.') + '</div></td></tr>'
     : '';
   const rows = steps.map(function (s, i) { return stepRow(s, i, today); }).join('');
 
@@ -112,7 +118,8 @@ function buildHtml(plan, steps, mode, icsCount, today, calLink) {
     '<tr><td style="padding:22px 24px 24px;">' +
     '<div style="font-size:12px;color:' + C.muted + ';line-height:1.7;border-top:1px solid ' + C.line + ';padding-top:14px;">' +
     '정보는 온통청년 공공데이터와 공식 공고 기준이에요. 안내 받은 날짜가 다르면 안내를 따라 주세요.<br>' +
-    '시연용 서비스라 매일 자동 메일은 보내지 않아요. 이후 알림은 캘린더가 담당해요.' +
+    '시연용 서비스라 매일 자동 메일은 보내지 않아요. 이후 알림은 캘린더가 담당해요.<br>' +
+    '<b style="color:' + C.text + ';">' + L.escapeHtml(PRIVATE_LINK_NOTE) + '</b>' +
     '</div></td></tr>' +
     '</table></td></tr></table></body></html>';
 }
@@ -125,13 +132,14 @@ function buildText(plan, steps, today, mode, calLink) {
     if (s.note) lines.push('   ' + s.note);
     if (s.warning) lines.push('   ⚠ ' + s.warning);
   });
-  if (plan.manageUrl) lines.push('', '관리 화면: ' + plan.manageUrl);
+  if (plan.manageLink || plan.manageUrl) lines.push('', '관리 화면: ' + (plan.manageLink || plan.manageUrl));
   // 버튼이 안 될 때: 단계별 구글 캘린더 링크
   const gLines = steps.filter(function (s) { return !s.done; }).map(function (s) {
     const href = ICS.googleLink(plan, s, today);
     return href ? '- ' + s.title + ': ' + href : '';
   }).filter(Boolean);
   if (gLines.length) lines.push('', (calLink ? '버튼이 안 될 때 — ' : '') + '구글 캘린더에 하나씩 추가:', gLines.join('\n'));
+  lines.push('', PRIVATE_LINK_NOTE);
   return lines.join('\n');
 }
 
@@ -176,6 +184,11 @@ module.exports = async function handler(req, res) {
   const ics = ICS.buildIcs(plan, steps, today);
   // 서명 비밀값이나 서비스 주소가 없으면 버튼 없이 구글 캘린더 링크만 보냄
   const calLink = ics.count ? ICS.makeCalendarLink(base, plan, steps, process.env.ICS_SIGN_SECRET) : '';
+  // [관리 화면 열기] 복원 링크 (정책번호가 같은 기록만, 6,000자 넘으면 완료 체크 빼고 → 그래도 넘으면 기본 링크)
+  const record = body.record && typeof body.record === 'object' && String(body.record.plcyNo || '') === plcyNo ? body.record : null;
+  // 받는 사람 이메일은 암호화해서 링크에 넣음 → 링크로 열면 입력칸에 채워짐 (링크 글자에는 주소가 안 보임)
+  const manage = PLAN.makeManageLink(base, record, process.env.ICS_SIGN_SECRET, email);
+  plan.manageLink = manage.level === 'basic' ? '' : manage.url;   // 구글 캘린더 일정 설명에는 기본 주소(plan.manageUrl)만 씀
   if (!calLink && ics.count) console.warn('[send-plan] 캘린더 버튼 링크를 만들지 못함 (ICS_SIGN_SECRET 또는 PUBLIC_BASE_URL 확인)');
   if (calLink.length > LINK_WARN_CHARS) console.warn('[send-plan] 캘린더 링크가 김: ' + calLink.length + '자');
   const subject = mode === 'update'
@@ -192,7 +205,7 @@ module.exports = async function handler(req, res) {
       html: buildHtml(plan, steps, mode, ics.count, today, calLink),
       // 첨부 파일 없음 — 캘린더 추가는 버튼 하나로 통일
     });
-    return L.send(res, 200, { ok: true, events: ics.count, calendarButton: !!calLink, linkLength: calLink.length });
+    return L.send(res, 200, { ok: true, events: ics.count, calendarButton: !!calLink, linkLength: calLink.length, manageLink: manage.level, manageLinkLength: plan.manageLink.length });
   } catch (err) {
     console.error('[send-plan] 발송 실패:', err && err.code, err && err.responseCode, err && err.message);
     if (err && err.code === 'EAUTH') return L.fail(res, 502, '메일 서버 로그인에 실패해서 보내지 못했어요. (서버의 Gmail 앱 비밀번호 확인 필요)');

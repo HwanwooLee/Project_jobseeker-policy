@@ -4,6 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>신청 후 관리 · 놓치지 마!</title>
+  <!-- 예전 버전이 이 기기에 남긴 기록 지우기 (이제 기기에는 저장하지 않음) -->
+  <script src="js/cleanup.js"></script>
   <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
@@ -31,7 +33,7 @@
         </div>
         <div class="start-field grow">
           <label for="start-email" class="start-date-label">이메일 <span class="optional">(선택)</span></label>
-          <input id="start-email" type="email" inputmode="email" autocomplete="email" class="date-input" placeholder="name@example.com">
+          <input id="start-email" type="email" inputmode="email" autocomplete="off" class="date-input" placeholder="name@example.com">
         </div>
         <div class="start-actions">
           <button type="submit" id="start-only" class="btn btn-secondary start-btn">관리 시작</button>
@@ -53,16 +55,15 @@
     <h2 id="list-title" class="list-title" hidden></h2>
     <div id="app-list" class="app-list"></div>
 
+    <!-- 정책번호도 메일 링크도 없이 들어왔을 때 -->
     <section id="empty-card" class="empty-card" hidden>
-      <h2 class="empty-title">아직 관리 중인 정책이 없어요</h2>
-      <p class="muted">결과 화면에서 정책을 고르고 [신청했어요]를 누르면 여기서 다음 할 일을 챙겨 드려요.</p>
+      <h2 class="empty-title">관리 기록은 메일로 받은 [관리 화면 열기] 링크로 열 수 있어요</h2>
+      <p class="muted">처음이라면 정책 목록에서 정책을 고르고 [신청했어요]를 눌러 관리를 시작하세요.</p>
       <a href="result.html" class="btn btn-primary empty-btn">정책 목록 보기</a>
     </section>
 
-    <!-- 공용 PC 대비 -->
     <footer class="manage-foot">
-      <button type="button" id="btn-clear" class="btn-danger-line">이 기기에서 내 기록 지우기</button>
-      <p class="data-note">신청 기록과 서류 체크는 이 브라우저에만 저장돼요. 공용 PC라면 다 쓴 뒤 지워 주세요.</p>
+      <p class="data-note">이 기기에는 아무것도 저장되지 않아요. 내 기록은 메일 링크로만 열려요.</p>
     </footer>
   </main>
   <script src="js/manage.js"></script>
