@@ -496,7 +496,7 @@
     const docs = docsSection(no, p);
     if (docs) card.appendChild(docs);
 
-    // 📧 관리 메일 + 캘린더 파일
+    // 📧 관리 메일 + 캘린더 추가 버튼
     card.appendChild(mailSection(app));
 
     // ✉ 안내 문자 붙여넣기 → AI가 일정 정리 (저장은 사용자가 고른 것만)
@@ -594,8 +594,8 @@
     return sec;
   }
 
-  // --- 📧 관리 메일 + 캘린더 파일 → /api/send-plan ---
-  // full: 전체 단계 + .ics / update: 안내 문자에서 새로 저장한 일정만 .ics
+  // --- 📧 관리 메일 + 캘린더 추가 버튼 → /api/send-plan ---
+  // full: 전체 단계 / update: 안내 문자에서 새로 저장한 일정만
   // 메일 주소는 다시 보내기·새 일정 발송을 위해 이 기기의 신청 기록에만 저장 ([내 기록 지우기]로 삭제)
   const EMAIL_RE = /^[^\s@<>"',;:()\[\]\\]+@[^\s@<>"',;:()\[\]\\]+\.[A-Za-z]{2,}$/;
   const MAIL_COOLDOWN = 30;
@@ -645,7 +645,7 @@
         if (r.status === 200 && r.data && r.data.ok) {
           app.email = email;           // 다음에 다시 보낼 때 쓰려고 기억
           saveApps();
-          return { ok: true, message: '메일을 보냈어요! 메일의 ' + (r.data.calendarButton ? '[📱 내 폰 캘린더에 추가] 버튼을' : '첨부 파일(.ics)을') +
+          return { ok: true, message: '메일을 보냈어요! 메일의 ' + (r.data.calendarButton ? '[📱 내 폰 캘린더에 추가] 버튼을' : '구글 캘린더 링크를') +
             ' 누르면 일정 ' + r.data.events + '개가 캘린더에 들어가요. (스팸함도 확인해 주세요)' };
         }
         if (r.status === 404 || r.status === 405 || r.status === 501) return { ok: false, message: '메일 기능을 찾지 못했어요. "npm run dev"로 켠 주소(또는 배포 주소)에서 열었는지 확인해 주세요.' };
@@ -669,7 +669,7 @@
     const st = mailState[no] = mailState[no] || {};
     const sec = el('section', 'sheet-section');
     sec.appendChild(sectionTitle('📧', '관리 메일 · 캘린더'));
-    sec.appendChild(el('p', 'sheet-hint top', '단계별 할 일과 캘린더 파일(.ics)을 메일로 보내 드려요. 파일을 열면 날짜 있는 일정은 하루 전, 매월 할 일은 매월 1일, 날짜 미정 단계는 매주 월요일에 캘린더가 알려 줘요.'));
+    sec.appendChild(el('p', 'sheet-hint top', '단계별 할 일과 [📱 내 폰 캘린더에 추가] 버튼을 메일로 보내 드려요. 캘린더에 넣으면 날짜 있는 일정은 하루 전, 매월 할 일은 매월 1일, 날짜 미정 단계는 매주 월요일에 캘린더가 알려 줘요.'));
     const row = el('div', 'mail-row');
     const id = 'mail-' + no;
     const label = el('label', 'sr-only', '이메일');
@@ -850,11 +850,11 @@
             const savedId = saveAiItem(app, steps, item, sel.value);
             st.saved[i] = true;
             st.mailNotes = st.mailNotes || {};
-            // 관리 메일을 받은 적이 있으면, 이 일정만 담은 캘린더 파일을 다시 보냄
+            // 관리 메일을 받은 적이 있으면, 이 일정만 담은 캘린더 추가 메일을 다시 보냄
             if (savedId && app.email) {
-              st.mailNotes[i] = { ok: true, text: app.email + '로 이 일정의 캘린더 파일을 보내는 중…' };
+              st.mailNotes[i] = { ok: true, text: app.email + '로 이 일정의 캘린더 추가 메일을 보내는 중…' };
               sendPlan(app, 'update', app.email, [savedId]).then(function (r) {
-                st.mailNotes[i] = { ok: r.ok, text: r.ok ? '이 일정만 담은 캘린더 파일을 ' + app.email + '로 보냈어요.' : r.message };
+                st.mailNotes[i] = { ok: r.ok, text: r.ok ? '이 일정만 담은 캘린더 추가 메일을 ' + app.email + '로 보냈어요.' : r.message };
                 render();
               });
             } else if (savedId) {

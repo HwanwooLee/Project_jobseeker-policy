@@ -1,11 +1,13 @@
 /* =========================================================
-   POST /api/send-plan — 신청 후 관리 메일 + 캘린더 추가 버튼 + 캘린더 파일(.ics) 첨부
+   POST /api/send-plan — 신청 후 관리 메일 + 캘린더 추가 버튼 (첨부 파일 없음)
    받는 값: { email, mode: "full" | "update", plan: { policyName, plcyNo, appliedAt },
             steps: [{ id, title, type: "exact"|"approx"|"none"|"monthly", date, done, note, warning, evidence, sourceUrl }] }
      full   : 전체 단계 타임라인 + 모든 일정
      update : 안내 문자에서 새로 저장한 일정만
    메일 맨 위 [📱 내 폰 캘린더에 추가] → /api/add-calendar (서명된 링크, add-calendar.js)
-   버튼이 안 될 때: 첨부 파일(일반 파일 형식) / 구글 캘린더 링크
+     앱 안의 브라우저면 사파리·크롬으로 넘겨서 "모두 추가"까지 이어짐
+   버튼이 안 될 때: 단계별 구글 캘린더 링크
+   (.ics 첨부는 하지 않음 — 메일 앱에서 미리보기만 되거나 회의 초대로 보이는 문제가 있어서 버튼 하나로 통일)
    이후 알림은 사용자 캘린더가 담당 (매일 자동 메일 없음)
    키는 환경변수(GMAIL_USER, GMAIL_APP_PASSWORD, ICS_SIGN_SECRET)에서만 읽음
    ========================================================= */
@@ -20,18 +22,12 @@ const MAX_BODY_BYTES = 24 * 1024;
 const SAME_EMAIL_WAIT_MS = 30 * 1000;   // 같은 주소·같은 종류 메일은 30초에 한 번
 const SAME_IP_WAIT_MS = 10 * 1000;
 const LINK_WARN_CHARS = 2000;            // 이보다 긴 링크는 일부 메일 앱에서 잘릴 수 있음
-// 첨부는 "일반 파일" 형식으로 보냄. text/calendar로 보내면 네이버 메일이 회의 초대처럼
-// 수락/거절 버튼을 붙여서(2026-11 테스트 A/B 결과) 파일 이름(.ics)으로만 캘린더 파일임을 알림
-const ATTACH_TYPE = 'application/octet-stream';
+const BUTTON_HINT = "누르면 사파리(안드로이드는 크롬)로 넘어가요. 거기서 '모두 추가'를 눌러 주세요.";
 
 const C = {
   text: '#1E2340', muted: '#5d6280', line: '#e3e5ef', accent: '#2F6BFF', soft: '#eef3ff',
   red: '#e5484d', redSoft: '#fdecec', green: '#157a48', greenSoft: '#e6f6ed',
 };
-
-function icsFileName(mode) {
-  return mode === 'update' ? 'dontmiss-new-schedule.ics' : 'dontmiss-plan.ics';
-}
 
 // ===== 2. 메일 본문 =====
 function prettyDate(ymd) {
@@ -66,36 +62,30 @@ function stepRow(s, i, today) {
     '</td></tr>';
 }
 
-// 맨 위 큰 버튼 (링크를 못 만들면 첨부 파일 안내로 대신)
-function topBox(calLink, icsCount, fileName) {
-  if (!icsCount) return '';
-  if (calLink) {
-    return '<tr><td align="center" style="padding:20px 24px 0;">' +
-      '<a href="' + L.escapeHtml(calLink) + '" style="display:block;background:' + C.accent + ';color:#ffffff;font-size:18px;font-weight:700;text-decoration:none;border-radius:14px;padding:16px 18px;text-align:center;">📱 내 폰 캘린더에 추가</a>' +
-      '<div style="font-size:13px;color:' + C.muted + ';margin-top:8px;">누른 뒤 \'모두 추가\'를 한 번 더 눌러 주세요. (일정 ' + icsCount + '개, 알림 포함)</div>' +
-      '</td></tr>';
-  }
-  return '<tr><td style="padding:16px 24px 0;"><div style="background:' + C.soft + ';border-radius:12px;padding:12px 14px;font-size:13px;line-height:1.6;color:' + C.text + ';">' +
-    '📎 첨부 파일(<b>' + fileName + '</b>)을 눌러 캘린더에 추가하세요. (일정 ' + icsCount + '개, 알림 포함)<br>' +
-    '메일 앱에서 바로 안 열리면 파일을 저장한 뒤 열거나, 아래 \'구글 캘린더에 추가\'를 눌러 주세요.</div></td></tr>';
+// 맨 위 큰 버튼 하나 (링크를 못 만들면 버튼 없이 아래 구글 캘린더 링크만)
+function topBox(calLink, icsCount) {
+  if (!icsCount || !calLink) return '';
+  return '<tr><td align="center" style="padding:20px 24px 0;">' +
+    '<a href="' + L.escapeHtml(calLink) + '" style="display:block;background:' + C.accent + ';color:#ffffff;font-size:18px;font-weight:700;text-decoration:none;border-radius:14px;padding:16px 18px;text-align:center;">📱 내 폰 캘린더에 추가</a>' +
+    '<div style="font-size:13px;color:' + C.muted + ';margin-top:8px;">' + L.escapeHtml(BUTTON_HINT) + '</div>' +
+    '<div style="font-size:12px;color:' + C.muted + ';margin-top:2px;">일정 ' + icsCount + '개, 알림 포함</div>' +
+    '</td></tr>';
 }
 
-// 아래쪽 작게: 버튼이 안 될 때
-function fallbackBox(plan, steps, today, calLink, icsCount, fileName) {
+// 아래쪽 작게: 버튼이 안 될 때 → 단계별 구글 캘린더 링크만
+function fallbackBox(plan, steps, today, calLink, icsCount) {
   if (!icsCount) return '';
   const gLinks = steps.filter(function (s) { return !s.done; }).map(function (s) {
     const href = ICS.googleLink(plan, s, today);
     return href ? '<div style="padding:3px 0;">' + link('+ ' + s.title, href, 12) + '</div>' : '';
   }).join('');
   return '<tr><td style="padding:18px 24px 0;"><div style="background:#f6f7fb;border-radius:12px;padding:12px 14px;font-size:12px;line-height:1.6;color:' + C.muted + ';">' +
-    '<b style="color:' + C.text + ';">' + (calLink ? '버튼이 안 될 때' : '구글 캘린더를 쓴다면') + '</b><br>' +
-    (calLink ? '· 첨부 파일(' + fileName + ')을 눌러 캘린더에 추가하세요. 메일 앱에서 바로 안 열리면 파일을 저장한 뒤 열어 주세요.<br>' : '') +
-    '· 구글 캘린더에 하나씩 추가 (알림은 캘린더 기본 설정을 따라요):' + gLinks +
+    '<b style="color:' + C.text + ';">' + (calLink ? '버튼이 안 될 때' : '캘린더에 추가하기') + '</b><br>' +
+    '구글 캘린더에 하나씩 추가 (알림은 캘린더 기본 설정을 따라요):' + gLinks +
     '</div></td></tr>';
 }
 
 function buildHtml(plan, steps, mode, icsCount, today, calLink) {
-  const fileName = icsFileName(mode);
   const title = mode === 'update' ? '새 일정을 캘린더에 넣어 드려요' : '신청 후 할 일을 정리했어요';
   const intro = mode === 'update'
     ? '안내 문자에서 찾아 저장한 일정이에요.'
@@ -115,10 +105,10 @@ function buildHtml(plan, steps, mode, icsCount, today, calLink) {
     '<div style="font-size:21px;font-weight:700;margin-top:4px;">' + L.escapeHtml(plan.policyName) + '</div>' +
     '<div style="font-size:14px;color:' + C.muted + ';margin-top:4px;">' + L.escapeHtml(title) + '. ' + L.escapeHtml(intro) + '</div>' +
     '</td></tr>' +
-    topBox(calLink, icsCount, fileName) +
+    topBox(calLink, icsCount) +
     '<tr><td style="padding:16px 24px 0;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;">' + rows + '</table></td></tr>' +
     manageBtn +
-    fallbackBox(plan, steps, today, calLink, icsCount, fileName) +
+    fallbackBox(plan, steps, today, calLink, icsCount) +
     '<tr><td style="padding:22px 24px 24px;">' +
     '<div style="font-size:12px;color:' + C.muted + ';line-height:1.7;border-top:1px solid ' + C.line + ';padding-top:14px;">' +
     '정보는 온통청년 공공데이터와 공식 공고 기준이에요. 안내 받은 날짜가 다르면 안내를 따라 주세요.<br>' +
@@ -129,15 +119,19 @@ function buildHtml(plan, steps, mode, icsCount, today, calLink) {
 
 function buildText(plan, steps, today, mode, calLink) {
   const lines = ['[놓치지 마!] ' + plan.policyName + ' 신청 후 할 일', ''];
-  if (calLink) lines.push('📱 내 폰 캘린더에 추가: ' + calLink, "누른 뒤 '모두 추가'를 한 번 더 눌러 주세요.", '');
+  if (calLink) lines.push('📱 내 폰 캘린더에 추가: ' + calLink, BUTTON_HINT, '');
   steps.forEach(function (s, i) {
     lines.push((s.done ? '[완료] ' : (i + 1) + '. ') + s.title + ' — ' + dateText(s) + (s.done ? '' : (ICS.alarmLabel(s, today) ? ' · ' + ICS.alarmLabel(s, today) : '')));
     if (s.note) lines.push('   ' + s.note);
     if (s.warning) lines.push('   ⚠ ' + s.warning);
   });
   if (plan.manageUrl) lines.push('', '관리 화면: ' + plan.manageUrl);
-  lines.push('', (calLink ? '버튼이 안 될 때: ' : '') + '첨부 파일(' + icsFileName(mode) + ')을 눌러 캘린더에 추가하세요.',
-    "메일 앱에서 바로 안 열리면 파일을 저장한 뒤 열거나, 메일의 '구글 캘린더에 추가'를 눌러 주세요.");
+  // 버튼이 안 될 때: 단계별 구글 캘린더 링크
+  const gLines = steps.filter(function (s) { return !s.done; }).map(function (s) {
+    const href = ICS.googleLink(plan, s, today);
+    return href ? '- ' + s.title + ': ' + href : '';
+  }).filter(Boolean);
+  if (gLines.length) lines.push('', (calLink ? '버튼이 안 될 때 — ' : '') + '구글 캘린더에 하나씩 추가:', gLines.join('\n'));
   return lines.join('\n');
 }
 
@@ -180,7 +174,7 @@ module.exports = async function handler(req, res) {
 
   const today = L.todayKst();
   const ics = ICS.buildIcs(plan, steps, today);
-  // 서명 비밀값이나 서비스 주소가 없으면 버튼 없이 첨부 파일 안내로 대신함
+  // 서명 비밀값이나 서비스 주소가 없으면 버튼 없이 구글 캘린더 링크만 보냄
   const calLink = ics.count ? ICS.makeCalendarLink(base, plan, steps, process.env.ICS_SIGN_SECRET) : '';
   if (!calLink && ics.count) console.warn('[send-plan] 캘린더 버튼 링크를 만들지 못함 (ICS_SIGN_SECRET 또는 PUBLIC_BASE_URL 확인)');
   if (calLink.length > LINK_WARN_CHARS) console.warn('[send-plan] 캘린더 링크가 김: ' + calLink.length + '자');
@@ -196,13 +190,7 @@ module.exports = async function handler(req, res) {
       subject: subject,
       text: buildText(plan, steps, today, mode, calLink),
       html: buildHtml(plan, steps, mode, ics.count, today, calLink),
-      // 캘린더 파일은 본문에 끼우지 않고 일반 첨부로만 보냄 (위 ATTACH_TYPE 설명 참고)
-      attachments: ics.count ? [{
-        filename: icsFileName(mode),
-        contentDisposition: 'attachment',
-        content: ics.text,
-        contentType: ATTACH_TYPE,
-      }] : [],
+      // 첨부 파일 없음 — 캘린더 추가는 버튼 하나로 통일
     });
     return L.send(res, 200, { ok: true, events: ics.count, calendarButton: !!calLink, linkLength: calLink.length });
   } catch (err) {
