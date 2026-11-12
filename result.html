@@ -4,6 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>내 맞춤 정책 · 놓치지 마!</title>
+  <!-- 예전 버전이 이 기기에 남긴 기록 지우기 (이제 기기에는 저장하지 않음) -->
+  <script src="js/cleanup.js"></script>
   <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
@@ -11,11 +13,7 @@
 
     <header class="survey-top">
       <a href="index.html" class="brand">놓치지 마!</a>
-      <div class="top-links">
-        <a href="survey.html" class="link-muted">조건 다시 입력</a>
-        <!-- 신청 기록이 있을 때만 보임 (js/result.js) -->
-        <a id="btn-manage" href="manage.html" class="manage-pill" hidden>내 신청 관리</a>
-      </div>
+      <a href="survey.html" class="link-muted">조건 다시 입력</a>
     </header>
 
     <!-- 요약 -->
@@ -30,7 +28,7 @@
       <h2 id="notify-title" class="notify-title">마감 전, 그리고 신청 후 할 일까지 알려드릴게요</h2>
       <form id="notify-form" class="notify-form" novalidate>
         <label for="notify-email" class="sr-only">이메일</label>
-        <input id="notify-email" type="email" inputmode="email" autocomplete="email" placeholder="이메일 주소 (예: name@example.com)" class="notify-input">
+        <input id="notify-email" type="email" inputmode="email" autocomplete="off" placeholder="이메일 주소 (예: name@example.com)" class="notify-input">
         <fieldset class="notify-channels">
           <legend class="sr-only">알림 받을 방법</legend>
           <label class="channel"><input type="checkbox" id="ch-email" checked> 이메일</label>
@@ -51,11 +49,9 @@
     </div>
 
     <!-- 정책 카드 목록 -->
-    <div id="policy-list" class="policy-list" role="tabpanel"></div>
-    <p id="list-empty" class="list-empty" hidden>이 분야에서는 조건에 맞는 정책이 없어요.</p>
-    <div class="more-row">
-      <button type="button" id="btn-more" class="btn btn-secondary more-btn" hidden>더 보기</button>
-    </div>
+    <!-- 4개 구역: 🎯 딱 맞아요 / 🔍 맞지만 확인이 필요해요 / ⚠️ 일부 조건이 달라요 / 📋 참고용 -->
+    <div id="policy-list" class="tier-list" role="tabpanel"></div>
+    <p id="list-empty" class="list-empty" hidden>이 분야에는 정책이 없어요.</p>
 
     <p id="data-note" class="data-note"></p>
   </main>

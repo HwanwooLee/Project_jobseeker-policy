@@ -22,6 +22,8 @@ import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from link_check import check_links  # 같은 scripts 폴더의 마감 표시 점검 도구
+
 # 윈도우 터미널에서 한글이 깨지지 않도록
 sys.stdout.reconfigure(encoding="utf-8")
 
@@ -59,7 +61,9 @@ KEEP_FIELDS = [
     "sprtTrgtMinAge", "sprtTrgtMaxAge", "sprtTrgtAgeLmtYn", "zipCd",
     "jobCd", "schoolCd", "earnCndSeCd", "aplyYmd", "aplyPrdSeCd",
     "srngMthdCn", "sbmsnDcmntCn", "aplyUrlAddr", "operInstCdNm",
-    "refUrlAddr1",
+    "refUrlAddr1", "refUrlAddr2",
+    # 정확도 보강: 사업 기간(신청 기간과 비교용), 등록·수정일
+    "bizPrdBgngYmd", "bizPrdEndYmd", "bizPrdSeCd", "bizPrdEtcCn", "frstRegDt", "lastMdfcnDt",
 ]
 
 # 날짜 계산은 한국 시간 기준
@@ -179,6 +183,120 @@ def judge_period(policy, today):
     return True, "모집중", d_day, end_date.isoformat()
 
 
+# ---------------------------------------------------------------
+# 링크 분류: home(기관 첫 화면) / detail(정책·예약 상세) / page(그 밖의 페이지)
+# ---------------------------------------------------------------
+HOME_PATHS = {"", "/index", "/index.do", "/index.html", "/index.htm", "/index.jsp", "/index.php",
+              "/main", "/main.do", "/main.html", "/main.jsp", "/main.php", "/home", "/kor", "/kor/main.do"}
+DETAIL_RE = re.compile(r"view|reserv|detail|read\.|/read|article|(?:id|seq|no|idx|sn|key|num)=", re.IGNORECASE)
+
+
+def clean_url(value):
+    url = (value or "").strip()
+    return url if re.match(r"^https?://[^\s]+$", url, re.IGNORECASE) else ""
+
+
+def classify_link(url):
+    parsed = urllib.parse.urlsplit(url)
+    path = parsed.path.rstrip("/").lower()
+    rest = parsed.path + ("?" + parsed.query if parsed.query else "")
+    if DETAIL_RE.search(rest) or re.search(r"/\d{3,}$", path):
+        return "detail"
+    last = path.rsplit("/", 1)[-1]
+    if not parsed.query and (path in HOME_PATHS or re.fullmatch(r"(index|main|home)(\.\w+)?", last)):
+        return "home"
+    return "page"
+
+
+def build_links(policy):
+    """링크 3개(신청·참고1·참고2)를 분류하고 가장 좋은 링크(bestLink)를 고른다."""
+    links, seen = [], set()
+    for role, field in (("apply", "aplyUrlAddr"), ("ref1", "refUrlAddr1"), ("ref2", "refUrlAddr2")):
+        url = clean_url(policy.get(field))
+        if url and url not in seen:
+            seen.add(url)
+            links.append({"role": role, "url": url, "kind": classify_link(url)})
+    # 우선순위: detail 신청 > detail 참고 > page 신청 > page 참고 > home
+    rank = {("detail", "apply"): 0, ("detail", "ref1"): 1, ("detail", "ref2"): 2,
+            ("page", "apply"): 3, ("page", "ref1"): 4, ("page", "ref2"): 5,
+            ("home", "apply"): 6, ("home", "ref1"): 7, ("home", "ref2"): 8}
+    best = min(links, key=lambda l: rank[(l["kind"], l["role"])]) if links else None
+    return links, best
+
+
+# ---------------------------------------------------------------
+# 신청 기간 신뢰도: 연간 사업 기간을 그대로 적어 둔 경우를 걸러낸다
+# ---------------------------------------------------------------
+def parse_range(aply_ymd):
+    match = re.fullmatch(r"\s*(\d{8})\s*~\s*(\d{8})\s*", aply_ymd or "")
+    if not match:
+        return None, None
+    try:
+        return (datetime.strptime(match.group(1), "%Y%m%d").date(),
+                datetime.strptime(match.group(2), "%Y%m%d").date())
+    except ValueError:
+        return None, None
+
+
+def judge_confidence(policy, status):
+    """돌려주는 값: ("exact" | "uncertain", 이유 또는 None)"""
+    if status == "상시":
+        return "exact", None
+    if status != "모집중":
+        return "uncertain", "기간 형식 확인 필요"
+    start, end = parse_range(policy.get("aplyYmd"))
+    if start is None:
+        return "uncertain", "기간 형식 확인 필요"
+    if start.month == 1 and start.day == 1 and end.month == 12 and end.day == 31:
+        return "uncertain", "1월 1일~12월 31일 (연간)"
+    biz_start = (policy.get("bizPrdBgngYmd") or "").strip()
+    biz_end = (policy.get("bizPrdEndYmd") or "").strip()
+    if biz_start and biz_end and biz_start == start.strftime("%Y%m%d") and biz_end == end.strftime("%Y%m%d"):
+        return "uncertain", "신청 기간이 사업 기간과 같음"
+    if (end - start).days >= 183:
+        return "uncertain", "신청 기간이 6개월 이상"
+    return "exact", None
+
+
+# ---------------------------------------------------------------
+# 설명 글 속 날짜 단서 (원문 문장 그대로, 새 날짜를 만들지 않음)
+# ---------------------------------------------------------------
+HINT_RE = re.compile(
+    r"\d{1,2}\s*월\s*\d{1,2}\s*일"                     # 11월 30일
+    r"|~\s*'?\d{0,4}\s*\d{1,2}\s*[./]\s*\d{1,2}"        # ~11.30 / ~ 2026.11.30
+    r"|\d{4}\s*[./-]\s*\d{1,2}\s*[./-]\s*\d{1,2}"       # 2026.11.30
+    r"|\d{1,2}\s*[./]\s*\d{1,2}\s*\.?\s*\([월화수목금토일]\)"  # 11.30(월)
+    r"|회차별|차수별|선착순|조기\s*마감|예산\s*소진|소진\s*시"
+)
+# 신청 일정이 아닌 날짜(출생일·거주 기준일 등)가 든 문장은 뺌
+HINT_SKIP_RE = re.compile(r"출생|생년|기준일|주민등록|보호종료|연령")
+HINT_FIELDS = (("plcyExplnCn", "정책 설명"), ("plcySprtCn", "지원 내용"), ("plcyAplyMthdCn", "신청 방법"))
+MAX_HINTS = 3
+MAX_HINT_CHARS = 160
+
+
+def extract_date_hints(policy):
+    hints, seen = [], set()
+    for field, label in HINT_FIELDS:
+        text = policy.get(field) or ""
+        # 줄바꿈·문장 끝(다. / 요.)·글머리 기호 기준으로 문장을 나눔
+        for sentence in re.split(r"[\r\n]+|(?<=[다요]\.)\s+|\s(?=[○●■□▶※◦·\-]\s)", text):
+            sentence = re.sub(r"\s+", " ", sentence).strip(" -○●■□▶※◦·")
+            match = HINT_RE.search(sentence)
+            if not sentence or not match or HINT_SKIP_RE.search(sentence):
+                continue
+            if len(sentence) > MAX_HINT_CHARS:  # 너무 길면 단서 주변만 잘라 냄
+                begin = max(0, match.start() - 60)
+                sentence = ("…" if begin else "") + sentence[begin:begin + MAX_HINT_CHARS - 2] + "…"
+            if sentence in seen:
+                continue
+            seen.add(sentence)
+            hints.append({"text": sentence, "from": label})
+            if len(hints) >= MAX_HINTS:
+                return hints
+    return hints
+
+
 def judge_job(policy):
     """
     취준생 1차 필터
@@ -207,6 +325,8 @@ def build_record(policy, status, d_day, end_date, job_check_needed):
     max_age = to_int(policy.get("sprtTrgtMaxAge"))
     # sprtTrgtAgeLmtYn은 의미가 불분명해서 무시. 최소·최대가 둘 다 0이면 나이 제한 없음.
     no_age_limit = min_age == 0 and max_age == 0
+    links, best = build_links(policy)
+    confidence, reason = judge_confidence(policy, status)
 
     record.update({
         "categories": categories,
@@ -217,6 +337,12 @@ def build_record(policy, status, d_day, end_date, job_check_needed):
         "maxAge": None if no_age_limit else max_age,
         "noAgeLimit": no_age_limit,
         "jobCheckNeeded": job_check_needed,  # true면 "추가 확인 필요" (jobCd 비어 있음)
+        "links": links,                      # [{role: apply|ref1|ref2, url, kind: home|detail|page}]
+        "bestLink": best["url"] if best else None,
+        "bestLinkKind": best["kind"] if best else None,
+        "aplyPeriodConfidence": confidence,  # "exact" / "uncertain"
+        "aplyPeriodReason": reason,          # uncertain일 때 이유
+        "dateHints": extract_date_hints(policy),  # [{text: 원문 문장, from: 어느 칸}]
     })
     return record
 
@@ -265,7 +391,21 @@ def main():
     order = {"모집중": 0, "기간 확인 필요": 1, "상시": 2}
     final.sort(key=lambda r: (order[r["status"]], r["dDay"] if r["dDay"] is not None else 0))
 
-    # 5) 저장
+    # 5) 상세(detail) 링크 마감 표시 미리 점검 (AI 안 씀, scripts/link_check.py)
+    detail_urls = [l["url"] for r in final for l in r["links"] if l["kind"] == "detail"]
+    print(f"\n마감 표시 점검 중: 상세 링크 {len(set(detail_urls))}개 (동시 5개, 링크당 5초) ...")
+    check_started = time.monotonic()
+    checked = check_links(detail_urls)
+    check_seconds = time.monotonic() - check_started
+    checked_at = datetime.now(KST).isoformat(timespec="seconds")
+    for r in final:
+        links = [dict({"role": l["role"], "url": l["url"]}, **checked[l["url"]]) for l in r["links"] if l["kind"] == "detail"]
+        r["linkStatus"] = {"checkedAt": checked_at, "links": links} if links else None
+    link_count = {"closed_hint": 0, "no_hint": 0, "unknown": 0}
+    for v in checked.values():
+        link_count[v["result"]] += 1
+
+    # 6) 저장
     counts = {
         "byCategory": raw_counts,
         "collectedTotal": len(collected),
@@ -295,6 +435,13 @@ def main():
         status_count[r["status"]] = status_count.get(r["status"], 0) + 1
     print(f"  최종 상태별: {status_count}")
     print(f"  추가 확인 필요(jobCd 비어 있음): {sum(r['jobCheckNeeded'] for r in final)}건")
+    print(f"  신청 기간 확인 필요(uncertain): {sum(r['aplyPeriodConfidence'] == 'uncertain' for r in final)}건")
+    print(f"  기관 첫 화면 링크만 있음(home): {sum(r['bestLinkKind'] == 'home' for r in final)}건")
+    print(f"  링크 없음: {sum(r['bestLink'] is None for r in final)}건")
+    print(f"  날짜 단서(dateHints) 있음: {sum(bool(r['dateHints']) for r in final)}건")
+    print(f"  마감 표시 점검: 링크 {len(checked)}개 → closed_hint {link_count['closed_hint']}, "
+          f"no_hint {link_count['no_hint']}, unknown {link_count['unknown']} ({check_seconds:.0f}초)")
+    print(f"  마감 표시가 보이는 정책: {sum(1 for r in final if r['linkStatus'] and any(l['result'] == 'closed_hint' for l in r['linkStatus']['links']))}건")
     print(f"\n저장 완료: {OUTPUT_PATH.relative_to(PROJECT_ROOT)}")
 
 

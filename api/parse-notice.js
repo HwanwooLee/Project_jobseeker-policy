@@ -1,28 +1,22 @@
 /* =========================================================
    POST /api/parse-notice — 안내 문자·메일을 AI(Claude)가 일정으로 정리
    받는 값: { policyName, text(최대 3,000자) }
-   남용 방지: 같은 IP는 1분에 3번까지 (넘으면 429)
+   남용 방지: 같은 IP는 1분에 3번 + 한 달 전체 한도 (check-period와 함께 셈, api/_ai.js)
    돌려주는 값: { ok, items: [{ step, date("YYYY-MM-DD"|null), dateType("exact"|"approx"|"none"),
                                evidence, evidenceFound, warnings[] }] }
-   - Claude API는 HTTP로 직접 호출 (키는 환경변수 ANTHROPIC_API_KEY에서만 읽음)
+   - Claude 호출은 api/_ai.js (키는 환경변수 ANTHROPIC_API_KEY에서만 읽음)
    - AI 결과는 서버에서 한 번 더 검사: 날짜 형식, 근거 문장이 원문에 있는지, 요일이 맞는지
    ========================================================= */
 'use strict';
 
 const L = require('./_lib');
+const AI = require('./_ai');
 
 // ===== 1. 설정 =====
-const MODEL = 'claude-haiku-5-5';
-const API_URL = 'https://api.anthropic.com/v1/messages';
-const API_VERSION = '2026-10-21';
 const MAX_TEXT = 3000;                 // 붙여넣기 최대 글자 수
 // 한글 3,000자는 그대로 보내면 약 9KB, "가"처럼 바꿔 보내면 약 18KB → 어느 쪽이든 통과하게 24KB
 const MAX_BODY_BYTES = 24 * 1024;
-const RATE_MAX = 3;                    // 같은 IP는 1분에 3번까지 (AI 호출 남용 방지)
-const RATE_WINDOW_MS = 60 * 1000;
 const TOO_LONG_MSG = '3,000자 이내로 붙여넣어 주세요';
-const RATE_MSG = '잠시 후 다시 시도해 주세요';
-const TIMEOUT_MS = 30 * 1000;
 const MAX_ITEMS = 10;
 
 // 시스템 지시 — 날짜·내용을 지어내지 않도록
@@ -65,37 +59,6 @@ const SCHEMA = {
   required: ['items'],
   additionalProperties: false,
 };
-
-// ===== 2. Claude 호출 =====
-async function callClaude(apiKey, policyName, text, today) {
-  const controller = new AbortController();
-  const timer = setTimeout(function () { controller.abort(); }, TIMEOUT_MS);
-  try {
-    const res = await fetch(API_URL, {
-      method: 'POST',
-      signal: controller.signal,
-      headers: {
-        'content-type': 'application/json',
-        'x-api-key': apiKey,
-        'anthropic-version': API_VERSION,
-      },
-      body: JSON.stringify({
-        model: MODEL,
-        max_tokens: 4000,
-        system: SYSTEM,
-        output_config: { effort: 'low', format: { type: 'json_schema', schema: SCHEMA } },
-        messages: [{
-          role: 'user',
-          content: '기준일(오늘): ' + today + '\n정책명: ' + (policyName || '(모름)') + '\n\n<안내문>\n' + text + '\n</안내문>',
-        }],
-      }),
-    });
-    const data = await res.json().catch(function () { return null; });
-    return { status: res.status, data: data };
-  } finally {
-    clearTimeout(timer);
-  }
-}
 
 // ===== 3. AI 결과 검사 =====
 function normalize(s) { return String(s || '').replace(/\s+/g, ' ').trim(); }
@@ -149,39 +112,19 @@ module.exports = async function handler(req, res) {
   const text = L.str(rawText, MAX_TEXT);
   if (text.length < 5) return L.fail(res, 400, '안내 문자나 메일 내용을 붙여넣어 주세요.');
 
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) return L.fail(res, 500, 'AI 정리 설정이 아직 안 돼 있어요. (서버 환경변수 확인 필요)');
-
   // 형식 검사를 통과한 요청만 셈 (너무 긴 글 등은 AI를 부르지 않으므로 횟수에 넣지 않음)
-  const wait = L.rateLimit('notice:' + L.clientIp(req), RATE_MAX, RATE_WINDOW_MS);
-  if (wait) {
-    res.setHeader('Retry-After', String(wait));
-    return L.fail(res, 429, RATE_MSG, { retryAfter: wait });
-  }
+  const blocked = AI.gate(req);
+  if (blocked) return AI.sendGate(res, blocked);
 
-  let result;
-  try {
-    result = await callClaude(apiKey, policyName, text, L.todayKst());
-  } catch (err) {
-    console.error('[parse-notice] 호출 실패:', err && err.name, err && err.message);
-    return L.fail(res, 504, err && err.name === 'AbortError' ? 'AI 응답이 너무 늦어요. 잠시 후 다시 시도해 주세요.' : 'AI 서버에 연결하지 못했어요. 잠시 후 다시 시도해 주세요.');
-  }
+  const result = await AI.askJson({
+    tag: 'parse-notice',
+    system: SYSTEM,
+    schema: SCHEMA,
+    content: '기준일(오늘): ' + L.todayKst() + '\n정책명: ' + (policyName || '(모름)') + '\n\n<안내문>\n' + text + '\n</안내문>',
+    refusalMsg: 'AI가 이 글을 정리하지 않았어요. 안내 내용만 붙여넣었는지 확인해 주세요.',
+    maxTokensMsg: 'AI 답이 중간에 끊겼어요. 글을 조금 줄여서 다시 시도해 주세요.',
+  });
+  if (!result.ok) return L.fail(res, result.status, result.message);
 
-  const data = result.data;
-  if (result.status !== 200 || !data) {
-    console.error('[parse-notice] API 오류:', result.status, data && data.error && data.error.type, data && data.error && data.error.message);
-    if (result.status === 401 || result.status === 403) return L.fail(res, 502, 'AI 서버 인증에 실패했어요. (서버의 API 키 확인 필요)');
-    if (result.status === 429 || result.status === 529) return L.fail(res, 503, 'AI 서버가 바빠요. 잠시 후 다시 시도해 주세요.');
-    return L.fail(res, 502, 'AI가 정리하지 못했어요. 잠시 후 다시 시도해 주세요.');
-  }
-  if (data.stop_reason === 'refusal') return L.fail(res, 422, 'AI가 이 글을 정리하지 않았어요. 안내 내용만 붙여넣었는지 확인해 주세요.');
-  if (data.stop_reason === 'max_tokens') return L.fail(res, 502, 'AI 답이 중간에 끊겼어요. 글을 조금 줄여서 다시 시도해 주세요.');
-
-  // 생각(thinking) 블록이 먼저 올 수 있어서 text 블록만 읽음
-  const textBlock = (data.content || []).find(function (b) { return b && b.type === 'text'; });
-  let parsed = null;
-  try { parsed = JSON.parse(textBlock ? textBlock.text : ''); } catch (e) { parsed = null; }
-  if (!parsed) return L.fail(res, 502, 'AI 답을 읽지 못했어요. 잠시 후 다시 시도해 주세요.');
-
-  return L.send(res, 200, { ok: true, items: cleanItems(parsed, text), model: MODEL });
+  return L.send(res, 200, { ok: true, items: cleanItems(result.json, text), model: AI.MODEL });
 };

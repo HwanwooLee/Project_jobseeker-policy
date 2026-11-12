@@ -1,0 +1,6 @@
+{
+  "functions": {
+    "api/check-link.js": { "includeFiles": "data/policies.json" },
+    "api/check-period.js": { "includeFiles": "data/policies.json" }
+  }
+}
