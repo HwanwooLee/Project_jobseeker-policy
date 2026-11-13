@@ -1346,3 +1346,12 @@ body.retro {
 .ai-kind { font: inherit; font-size: 0.82rem; padding: 6px 8px; border: 2px solid var(--line); border-radius: 10px; background: #fff; color: var(--text); }
 .ai-item-text { flex: 1 1 160px; min-width: 0; padding: 8px 12px; font-size: 0.88rem; }
 .ai-items { margin-top: 8px; }
+
+/* ----- 관리 화면: [+ 일정 추가] ----- */
+.add-schedule { margin-top: 12px; }
+.quick-names { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 10px; }
+.add-row { display: flex; flex-wrap: wrap; gap: 10px; }
+.add-row .custom-field.grow { flex: 1 1 200px; }
+.add-name { width: 100%; }
+.add-actions { display: flex; gap: 8px; margin-top: 10px; }
+.no-docs { margin-top: 6px; color: var(--muted); word-break: keep-all; }

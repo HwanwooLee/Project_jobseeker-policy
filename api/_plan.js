@@ -81,7 +81,10 @@ function cleanRecord(r, itemChars) {
     const ex = r.extraSteps.slice(0, 10).map(function (x) {
       if (!x || !ID_RE.test(String(x.id || ''))) return null;
       const title = L.oneLine(x.title, 40);
-      return title ? { id: x.id, title: title, date: L.isYmd(x.date) ? x.date : null, evidence: L.oneLine(x.evidence, 300) } : null;
+      if (!title) return null;
+      const row = { id: x.id, title: title, date: L.isYmd(x.date) ? x.date : null, evidence: L.oneLine(x.evidence, 300) };
+      if (x.manual === true) row.manual = true;   // [+ 일정 추가]로 직접 넣은 일정
+      return row;
     }).filter(Boolean);
     if (ex.length) out.extraSteps = ex;
   }

@@ -133,6 +133,20 @@
   }
 
   // ===== 4. 글 도구 =====
+  // 제출 서류가 공고에 있는지 (result.js와 같은 규칙)
+  //   'none' : 비어 있음 / 해당없음 / 없음 / 미정 / "-" → 서류 단계·섹션을 보여 주지 않음
+  //   'refer': "별도 문의", "공고문 참고"처럼 서류 이름 없이 안내만 있음 → 체크리스트 없이 원문만
+  //   'list' : 서류가 적혀 있음 → 체크리스트
+  const NO_DOCS_RE = /^(해당\s*(사항)?\s*없음|없음|미정|제출\s*서류\s*없음|별도\s*서류\s*없음|[-.·\s]*)$/;
+  const REFER_RE = /문의|참고|참조|확인|상이|안내|공고/;
+  const DOC_WORD_RE = /서류|서$|증명|등본|초본|사본|확인서|계획서|신청서|이력서|증빙|자기소개|통장|신분증|졸업|재학|성적/;
+  function docsState(p) {
+    const t = String((p && p.sbmsnDcmntCn) || '').trim();
+    if (NO_DOCS_RE.test(t)) return 'none';
+    if (t.length <= 20 && REFER_RE.test(t) && !DOC_WORD_RE.test(t)) return 'refer';
+    return 'list';
+  }
+
   function isBlank(text) {
     const t = String(text || '').trim();
     return !t || t === '-' || t === '.';
@@ -221,7 +235,7 @@
     const steps = [];
 
     defs.forEach(function (d) {
-      if (d.onlyIfDocuments && (!p || isBlank(p.sbmsnDcmntCn))) return;
+      if (d.onlyIfDocuments && docsState(p) === 'none') return;   // 공고에 제출 서류가 없으면 서류 단계를 넣지 않음
       const state = (app.steps && app.steps[d.id]) || {};
       const s = {
         id: d.id, title: d.title, type: DATE_TYPE_LABEL[d.dateType] ? d.dateType : 'none',
@@ -266,7 +280,7 @@
       const state = (app.steps && app.steps[x.id]) || {};
       steps.push({
         id: x.id, title: x.title, type: x.date ? 'exact' : 'none', date: x.date || null, note: '', warning: '', weeklyCheck: '',
-        source: { manual: true, text: x.date ? '안내 문자에서 찾은 날짜' : '안내 문자에서 찾은 할 일' }, evidence: x.evidence || '',
+        source: { manual: true, text: x.manual ? '내가 입력한 날짜' : (x.date ? '안내 문자에서 찾은 날짜' : '안내 문자에서 찾은 할 일') }, evidence: x.evidence || '',
         extra: true, state: state, monthly: false, done: !!state.done,
         estimated: !!(x.date && app.dateEstimated && app.dateEstimated[x.id]),
       });
@@ -612,14 +626,21 @@
     return h;
   }
 
+  // --- 📅 직접 일정 입력 ---
+  // "결과 발표일" 칸은 기본으로 두고, 나머지는 [+ 일정 추가]로 이름(자유 입력) + 날짜를 넣음
+  // (예전에 넣은 "서류 제출 기한"이 있으면 그 칸도 보여 줌)
+  const QUICK_NAMES = ['결과 발표일', '서류 제출 기한', '면접·상담', '활동 시작일'];
+  const addState = {};   // 정책번호 → { open, name, date, error } (화면 메모리에서만)
   function customDatesSection(app) {
+    const no = app.plcyNo;
     const sec = el('section', 'sheet-section');
     sec.appendChild(sectionTitle('📅', '직접 일정 입력'));
-    sec.appendChild(el('p', 'sheet-hint top', '문자·메일로 날짜 안내를 받으면 입력해 주세요. 해당 단계가 정확한 날짜로 바뀌어요.'));
+    sec.appendChild(el('p', 'sheet-hint top', '문자·메일로 날짜 안내를 받으면 입력해 주세요. 해당 단계가 정확한 날짜로 바뀌거나 새 단계로 들어가요.'));
     const grid = el('div', 'custom-grid');
     CUSTOM_DATES.forEach(function (c) {
+      if (c.key !== 'resultDate' && !(app.customDates && app.customDates[c.key])) return;
       const wrap = el('div', 'custom-field');
-      const id = 'cd-' + app.plcyNo + '-' + c.key;
+      const id = 'cd-' + no + '-' + c.key;
       const label = el('label', 'custom-label', c.label);
       label.htmlFor = id;
       const input = el('input', 'date-input');
@@ -639,16 +660,98 @@
       grid.appendChild(wrap);
     });
     sec.appendChild(grid);
+    sec.appendChild(addScheduleBox(app));
     return sec;
   }
 
+  function addScheduleBox(app) {
+    const no = app.plcyNo;
+    const st = addState[no] = addState[no] || { open: false, name: '', date: '', error: '' };
+    const box = el('div', 'add-schedule');
+    if (!st.open) {
+      const open = el('button', 'btn-line', '+ 일정 추가');
+      open.type = 'button';
+      open.addEventListener('click', function () { st.open = true; st.error = ''; render(); });
+      box.appendChild(open);
+      return box;
+    }
+    const quick = el('div', 'quick-names');
+    quick.appendChild(el('span', 'custom-label', '자주 쓰는 이름'));
+    QUICK_NAMES.forEach(function (n) {
+      const b = el('button', 'mini-btn' + (st.name === n ? ' primary' : ''), n);
+      b.type = 'button';
+      b.addEventListener('click', function () { st.name = n; render(); });
+      quick.appendChild(b);
+    });
+    box.appendChild(quick);
+    const row = el('div', 'add-row');
+    const nameId = 'add-name-' + no, dateId = 'add-date-' + no;
+    const nameLabel = el('label', 'custom-label', '일정 이름');
+    nameLabel.htmlFor = nameId;
+    const name = el('input', 'date-input add-name');
+    name.type = 'text'; name.id = nameId; name.maxLength = 40; name.value = st.name;
+    name.placeholder = '예: 오리엔테이션 참석';
+    name.addEventListener('input', function () { st.name = name.value; });
+    const dateLabel = el('label', 'custom-label', '날짜');
+    dateLabel.htmlFor = dateId;
+    const date = el('input', 'date-input');
+    date.type = 'date'; date.id = dateId; date.value = st.date;
+    date.addEventListener('change', function () { st.date = date.value; });
+    const nameWrap = el('div', 'custom-field grow'), dateWrap = el('div', 'custom-field');
+    nameWrap.append(nameLabel, name);
+    dateWrap.append(dateLabel, date);
+    row.append(nameWrap, dateWrap);
+    box.appendChild(row);
+    const actions = el('div', 'add-actions');
+    const save = el('button', 'mini-btn primary', '추가');
+    save.type = 'button';
+    save.addEventListener('click', function () {
+      const title = String(st.name || '').trim();
+      if (!title) { st.error = '일정 이름을 넣어 주세요.'; render(); return; }
+      if (!parseYmd(st.date)) { st.error = '날짜를 골라 주세요.'; render(); return; }
+      addSchedule(app, title, st.date);
+      addState[no] = { open: false, name: '', date: '', error: '' };
+      render();
+    });
+    const cancel = el('button', 'mini-btn', '취소');
+    cancel.type = 'button';
+    cancel.addEventListener('click', function () { addState[no] = { open: false, name: '', date: '', error: '' }; render(); });
+    actions.append(save, cancel);
+    box.appendChild(actions);
+    if (st.error) box.appendChild(el('p', 'form-error', st.error));
+    return box;
+  }
+
+  // 추가한 일정 저장: 같은 뜻의 단계가 있으면 그 단계 날짜로, 없으면 새 단계로
+  //   결과 발표일 → "결과 발표" 단계 날짜 / 서류 제출 기한 → 서류 단계가 있을 때만 그 단계 날짜 / 나머지 → 새 단계
+  function addSchedule(app, title, date) {
+    app.customDates = app.customDates || {};
+    const steps = buildSteps(app, policyOf(app.plcyNo)).steps;
+    const hasDocStep = steps.some(function (s) { return s.dateKey === 'docDeadline'; });
+    let key = null;
+    if (title === '결과 발표일') key = 'resultDate';
+    else if (title === '서류 제출 기한' && hasDocStep) key = 'docDeadline';
+    if (key) {
+      app.customDates[key] = date;
+      if (app.dateEvidence) delete app.dateEvidence[key];
+      if (app.dateEstimated) delete app.dateEstimated[key];
+    } else {
+      app.extraSteps = app.extraSteps || [];
+      app.extraSteps.push({ id: 'my-' + Date.now().toString(36), title: title.slice(0, 40), date: date, manual: true });
+    }
+    markChanged(app);
+    saveApps();
+  }
+
   function docsSection(no, p) {
-    if (!p || isBlank(p.sbmsnDcmntCn)) return null;
+    const ds = docsState(p);
+    if (ds === 'none') return null;              // 공고에 제출 서류가 없으면 섹션을 보여 주지 않음
     const sec = el('section', 'sheet-section');
     sec.appendChild(sectionTitle('📄', '제출 서류'));
-    const docs = splitDocs(p.sbmsnDcmntCn);
+    const docs = ds === 'list' ? splitDocs(p.sbmsnDcmntCn) : null;
     if (!docs) {
       sec.appendChild(el('p', 'docs-raw-text', String(p.sbmsnDcmntCn).trim()));
+      if (ds === 'refer') sec.appendChild(el('p', 'sheet-hint', '공고에 서류 이름 없이 이렇게만 적혀 있어요. 필요한 서류는 운영기관에 확인해 주세요.'));
       return sec;
     }
     const state = loadDocs(no);

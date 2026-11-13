@@ -102,6 +102,21 @@
     const t = String(text || '').trim();
     return !t || t === '-' || t === '.';
   }
+  // 제출 서류가 공고에 있는지 (manage.js와 같은 규칙)
+  //   'none' : 비어 있음 / 해당없음 / 없음 / 미정 / "-" → 서류 단계·섹션을 보여 주지 않음
+  //   'refer': "별도 문의", "공고문 참고"처럼 서류 이름 없이 안내만 있음 → 체크리스트 없이 원문만
+  //   'list' : 서류가 적혀 있음 → 체크리스트
+  const NO_DOCS_RE = /^(해당\s*(사항)?\s*없음|없음|미정|제출\s*서류\s*없음|별도\s*서류\s*없음|[-.·\s]*)$/;
+  const REFER_RE = /문의|참고|참조|확인|상이|안내|공고/;
+  const DOC_WORD_RE = /서류|서$|증명|등본|초본|사본|확인서|계획서|신청서|이력서|증빙|자기소개|통장|신분증|졸업|재학|성적/;
+  function docsState(p) {
+    const t = String((p && p.sbmsnDcmntCn) || '').trim();
+    if (NO_DOCS_RE.test(t)) return 'none';
+    if (t.length <= 20 && REFER_RE.test(t) && !DOC_WORD_RE.test(t)) return 'refer';
+    return 'list';
+  }
+  const NO_DOCS_TEXT = '공고에 제출 서류가 적혀 있지 않아요. 신청 페이지에서 바로 신청하는 방식일 수 있어요.';
+
   function won(n) { return n.toLocaleString('ko-KR') + '만 원'; }
   function namesOf(list, table) {
     const known = [], seen = {};
@@ -723,7 +738,11 @@
     }
     box('지원 대상', target);
 
-    box('신청 방법', clampText(p.plcyAplyMthdCn));
+    // 신청 방법 (제출 서류가 공고에 없으면 그 아래에 한 줄)
+    const how = el('div');
+    how.appendChild(clampText(p.plcyAplyMthdCn));
+    if (docsState(p) === 'none') how.appendChild(el('p', 'info-sub no-docs', NO_DOCS_TEXT));
+    box('신청 방법', how);
     box('운영기관', isBlank(p.operInstCdNm) ? el('p', 'empty-note', EMPTY_TEXT) : el('p', 'info-text', p.operInstCdNm.trim()));
     sec.appendChild(grid);
     return sec;
@@ -781,10 +800,13 @@
 
   function docsSection(item) {
     const p = item.p;
+    const state0 = docsState(p);
+    if (state0 === 'none') return null;          // 공고에 서류가 없으면 섹션을 숨김 (신청 방법 아래 한 줄로 안내)
     const sec = section('📄', '제출 서류');
-    const docs = splitDocs(p.sbmsnDcmntCn);
+    const docs = state0 === 'list' ? splitDocs(p.sbmsnDcmntCn) : null;
     if (!docs) {
-      sec.appendChild(isBlank(p.sbmsnDcmntCn) ? el('p', 'empty-note', EMPTY_TEXT) : clampText(p.sbmsnDcmntCn));
+      sec.appendChild(clampText(p.sbmsnDcmntCn));
+      if (state0 === 'refer') sec.appendChild(el('p', 'sheet-hint', '공고에 서류 이름 없이 이렇게만 적혀 있어요. 필요한 서류는 운영기관에 확인해 주세요.'));
       return sec;
     }
     // 저장 형태: { checked: { "서류 이름": true }, updatedAt } — 6단계 관리 화면과 공유
@@ -870,7 +892,7 @@
         steps = (data && data.common && Array.isArray(data.common.steps)) ? data.common.steps : FALLBACK_COMMON_STEPS;
       }
       // 제출 서류가 없는 정책은 "제출 서류 준비" 단계를 빼고, noteFrom이면 정책 글을 설명으로
-      steps = steps.filter(function (s) { return !(s.onlyIfDocuments && isBlank(p.sbmsnDcmntCn)); })
+      steps = steps.filter(function (s) { return !(s.onlyIfDocuments && docsState(p) === 'none'); })
         .map(function (s) {
           const copy = Object.assign({}, s);
           if (copy.noteFrom && !isBlank(p[copy.noteFrom])) copy.note = String(p[copy.noteFrom]).trim();
@@ -1134,7 +1156,8 @@
 
     sheetBody.innerHTML = '';
     currentItem = item;
-    sheetBody.append(matchSection(item), periodSection(item), infoSection(item), docsSection(item), stepsSection(item), linksSection(item));
+    [matchSection(item), periodSection(item), infoSection(item), docsSection(item), stepsSection(item), linksSection(item)]
+      .forEach(function (sec) { if (sec) sheetBody.appendChild(sec); });
     sheetBody.scrollTop = 0;
 
     setSheetAction(item);
