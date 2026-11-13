@@ -1,7 +1,7 @@
 /* =========================================================
    POST /api/check-period — [실제 접수 기간 확인] 버튼을 눌렀을 때만 호출
    신청 페이지 글을 AI(Claude Haiku)가 읽고 링크마다 접수 기간·상태·근거 문장을 정리
-   받는 값: { plcyNo }   ← 링크 주소는 받지 않음. data/policies.json에 있는 링크만 엶
+   받는 값: { plcyNo }   ← 링크 주소는 받지 않음. data/policies.json에서 미리 점검으로 확인된(verified) 링크만 엶
    돌려주는 값: { ok, results: [{ role, label, url, readable, start, end, status, periodEvidence, statusEvidence, note }], cached }
      start/end: "YYYY-MM-DD" 또는 null (페이지에 적힌 날짜만. 기간 근거 문장에 그 날짜가 없으면 서버가 지움)
      status: "접수중" / "마감" / "알 수 없음"
@@ -126,12 +126,8 @@ module.exports = async function handler(req, res) {
   const hit = dayCache.get(policy.plcyNo);
   if (hit && hit.day === today) return L.send(res, 200, { ok: true, results: hit.results, cached: true });
 
-  // 상세 링크가 없으면 기관 첫 화면이 아닌 링크(page)까지 봄
-  let links = P.detailLinks(policy);
-  if (!links.length) {
-    links = (policy.links || []).filter(function (l) { return l.kind === 'page'; }).slice(0, 3)
-      .map(function (l) { return { role: l.role, label: P.ROLE_LABEL[l.role] || '링크', url: l.url }; });
-  }
+  // 미리 점검에서 정책 내용이 확인된(verified) 링크만 읽음 — 첫 화면·검색·다른 내용 페이지는 AI에 보내지 않음
+  const links = P.verifiedLinks(policy);
   if (!links.length) return L.fail(res, 422, FAIL_MSG);
 
   const wait = L.rateLimit('check-period:' + L.clientIp(req), FETCH_RATE_MAX, FETCH_RATE_WINDOW_MS);

@@ -22,7 +22,7 @@ import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from link_check import check_links  # 같은 scripts 폴더의 마감 표시 점검 도구
+from link_check import check_policies  # 같은 scripts 폴더의 링크 점검 도구 (규칙은 api/_linkrules.js와 같음)
 
 # 윈도우 터미널에서 한글이 깨지지 않도록
 sys.stdout.reconfigure(encoding="utf-8")
@@ -391,19 +391,31 @@ def main():
     order = {"모집중": 0, "기간 확인 필요": 1, "상시": 2}
     final.sort(key=lambda r: (order[r["status"]], r["dDay"] if r["dDay"] is not None else 0))
 
-    # 5) 상세(detail) 링크 마감 표시 미리 점검 (AI 안 씀, scripts/link_check.py)
-    detail_urls = [l["url"] for r in final for l in r["links"] if l["kind"] == "detail"]
-    print(f"\n마감 표시 점검 중: 상세 링크 {len(set(detail_urls))}개 (동시 5개, 링크당 5초) ...")
+    # 5) 링크 점검: 정책마다 신청URL·참고URL 1·2를 모두 열어서 링크별 상태를 정함 (AI 안 씀, scripts/link_check.py)
+    jobs, owners = [], []
+    for r in final:
+        pol = {"name": r["plcyNm"], "minAge": r["minAge"], "maxAge": r["maxAge"]}
+        for l in r["links"]:
+            jobs.append((l["url"], pol))
+            owners.append((r, l))
+    print(f"\n링크 점검 중: 링크 {len(jobs)}개 (동시 5개, 링크당 5초, 같은 사이트는 간격 두기) ...")
     check_started = time.monotonic()
-    checked = check_links(detail_urls)
+    results, url_count = check_policies(jobs)
     check_seconds = time.monotonic() - check_started
     checked_at = datetime.now(KST).isoformat(timespec="seconds")
     for r in final:
-        links = [dict({"role": l["role"], "url": l["url"]}, **checked[l["url"]]) for l in r["links"] if l["kind"] == "detail"]
-        r["linkStatus"] = {"checkedAt": checked_at, "links": links} if links else None
-    link_count = {"closed_hint": 0, "no_hint": 0, "unknown": 0}
-    for v in checked.values():
-        link_count[v["result"]] += 1
+        r["linkStatus"] = {"checkedAt": checked_at, "links": []}
+    for (r, l), res in zip(owners, results):
+        r["linkStatus"]["links"].append(dict({"role": l["role"], "url": l["url"]}, **res))
+    link_count = {}
+    for r in final:
+        # bestLink: verified_apply > verified_info (신청URL → 참고 1 → 참고 2 순). 나머지는 쓰지 않음
+        ok = [l for l in r["linkStatus"]["links"] if l["status"] in ("verified_apply", "verified_info")]
+        best = next((l for l in ok if l["status"] == "verified_apply"), None) or (ok[0] if ok else None)
+        r["bestLink"] = best["url"] if best else None
+        r["bestLinkKind"] = best["status"] if best else None
+        for l in r["linkStatus"]["links"]:
+            link_count[l["status"]] = link_count.get(l["status"], 0) + 1
 
     # 6) 저장
     counts = {
@@ -436,12 +448,14 @@ def main():
     print(f"  최종 상태별: {status_count}")
     print(f"  추가 확인 필요(jobCd 비어 있음): {sum(r['jobCheckNeeded'] for r in final)}건")
     print(f"  신청 기간 확인 필요(uncertain): {sum(r['aplyPeriodConfidence'] == 'uncertain' for r in final)}건")
-    print(f"  기관 첫 화면 링크만 있음(home): {sum(r['bestLinkKind'] == 'home' for r in final)}건")
-    print(f"  링크 없음: {sum(r['bestLink'] is None for r in final)}건")
+    print(f"  링크가 하나도 없음: {sum(not r['links'] for r in final)}건")
     print(f"  날짜 단서(dateHints) 있음: {sum(bool(r['dateHints']) for r in final)}건")
-    print(f"  마감 표시 점검: 링크 {len(checked)}개 → closed_hint {link_count['closed_hint']}, "
-          f"no_hint {link_count['no_hint']}, unknown {link_count['unknown']} ({check_seconds:.0f}초)")
-    print(f"  마감 표시가 보이는 정책: {sum(1 for r in final if r['linkStatus'] and any(l['result'] == 'closed_hint' for l in r['linkStatus']['links']))}건")
+    order_names = ["verified_apply", "verified_info", "broken", "search", "home", "unmatched", "mismatch_page", "closed_hint", "unknown"]
+    print(f"  링크 점검: 정책-링크 {len(jobs)}개 (주소 {url_count}개, {check_seconds:.0f}초)")
+    print("    " + ", ".join(f"{k} {link_count.get(k, 0)}" for k in order_names))
+    print(f"  bestLink: 신청 페이지(verified_apply) {sum(r['bestLinkKind'] == 'verified_apply' for r in final)}건, "
+          f"안내 페이지(verified_info) {sum(r['bestLinkKind'] == 'verified_info' for r in final)}건, "
+          f"없음 {sum(r['bestLink'] is None for r in final)}건")
     print(f"\n저장 완료: {OUTPUT_PATH.relative_to(PROJECT_ROOT)}")
 
 

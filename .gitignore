@@ -7,3 +7,6 @@ __pycache__/
 
 # Node 패키지 (npm install로 다시 받음)
 node_modules/
+
+# 링크 점검 확인용 목록 (사람이 직접 확인하는 용도, 커밋하지 않음)
+link_report.csv

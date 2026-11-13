@@ -1327,4 +1327,10 @@ body.retro {
 .link-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
 .link-item { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
 .link-best { font-size: 0.76rem; color: var(--accent); font-weight: 700; }
-.link-closed { font-size: 0.76rem; font-weight: 700; color: #fff; background: var(--miss); border-radius: 999px; padding: 3px 8px; }
+/* 관련 링크: 링크별 점검 상태 */
+.link-state { font-size: 0.76rem; font-weight: 700; border-radius: 999px; padding: 3px 8px; }
+.ls-ok { background: #e6f6ed; color: #157a48; }
+.ls-info { background: var(--accent-soft); color: var(--accent); }
+.ls-bad { background: #fdecec; color: var(--miss); }
+.ls-gray { background: #eef0f5; color: var(--muted); }
+.link-checked { margin-top: 8px; font-size: 0.76rem; color: var(--muted); }

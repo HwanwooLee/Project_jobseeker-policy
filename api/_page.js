@@ -24,10 +24,20 @@ function findPolicy(plcyNo) {
   return byNo.get(String(plcyNo || '')) || null;
 }
 
-// 확인할 링크: 상세(detail) 링크만, 최대 3개
-function detailLinks(policy) {
-  return (policy.links || []).filter(function (l) { return l.kind === 'detail'; }).slice(0, MAX_LINKS)
+// 정책의 링크 전부 (신청URL·참고URL 1·2, 최대 3개)
+function policyLinks(policy) {
+  return (policy.links || []).slice(0, MAX_LINKS)
     .map(function (l) { return { role: l.role, label: ROLE_LABEL[l.role] || '링크', url: l.url }; });
+}
+// 미리 점검(linkStatus)에서 확인된(verified) 링크만 — AI 접수 기간 확인에 씀
+function verifiedLinks(policy) {
+  const st = policy.linkStatus && Array.isArray(policy.linkStatus.links) ? policy.linkStatus.links : [];
+  return st.filter(function (l) { return l.status === 'verified_apply' || l.status === 'verified_info'; }).slice(0, MAX_LINKS)
+    .map(function (l) { return { role: l.role, label: ROLE_LABEL[l.role] || '링크', url: l.url }; });
+}
+// 링크 판단에 쓰는 정책 정보
+function policyInfo(policy) {
+  return { name: policy.plcyNm, minAge: policy.minAge == null ? null : policy.minAge, maxAge: policy.maxAge == null ? null : policy.maxAge };
 }
 
 // ----- 페이지 받기 -----
@@ -38,7 +48,7 @@ function pickCharset(contentType, headBytes) {
   return m2 ? m2[1].toLowerCase() : 'utf-8';
 }
 
-// 돌려주는 값: { ok: true, html } 또는 { ok: false, reason }
+// 돌려주는 값: { ok, httpStatus, finalUrl, html(못 읽으면 없음), reason }
 async function fetchPage(url) {
   if (!/^https?:\/\//i.test(url)) return { ok: false, reason: 'bad_url' };
   const controller = new AbortController();
@@ -49,9 +59,10 @@ async function fetchPage(url) {
       redirect: 'follow',
       headers: { 'User-Agent': 'Mozilla/5.0 (compatible; dontmiss-policy-check/1.0)', 'Accept': 'text/html,*/*;q=0.5' },
     });
-    if (res.status !== 200) return { ok: false, reason: 'status_' + res.status };
+    const base = { httpStatus: res.status, finalUrl: res.url || url };
+    if (res.status !== 200) return Object.assign(base, { ok: false, reason: 'status_' + res.status });
     const type = res.headers.get('content-type') || '';
-    if (type && !/html|text/i.test(type)) return { ok: false, reason: 'not_html' };
+    if (type && !/html|text/i.test(type)) return Object.assign(base, { ok: false, reason: 'not_html' });
     // 너무 큰 페이지는 앞부분만
     const reader = res.body.getReader();
     const chunks = []; let size = 0;
@@ -65,7 +76,7 @@ async function fetchPage(url) {
     let html;
     try { html = new TextDecoder(pickCharset(type, buf.subarray(0, 4096))).decode(buf); }
     catch (e) { html = buf.toString('utf8'); }
-    return { ok: true, html: html };
+    return Object.assign(base, { ok: true, html: html });
   } catch (err) {
     return { ok: false, reason: err && err.name === 'AbortError' ? 'timeout' : 'network' };
   } finally {
@@ -84,6 +95,10 @@ function decodeEntities(s) {
     return ENTITIES[e.toLowerCase()] !== undefined ? ENTITIES[e.toLowerCase()] : all;
   });
 }
+function pageTitle(html) {
+  const m = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(String(html));
+  return m ? decodeEntities(m[1]).replace(/\s+/g, ' ').trim() : '';
+}
 function textNodes(html) {
   const body = String(html)
     .replace(/<!--[\s\S]*?-->/g, ' ')
@@ -92,4 +107,4 @@ function textNodes(html) {
     .filter(function (t) { return t.length > 0; });
 }
 
-module.exports = { findPolicy, detailLinks, fetchPage, textNodes, ROLE_LABEL };
+module.exports = { findPolicy, policyLinks, verifiedLinks, policyInfo, fetchPage, textNodes, pageTitle, ROLE_LABEL };

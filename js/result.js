@@ -295,13 +295,21 @@
   // 4단계: perfect(딱 맞아요) / check(맞지만 확인 필요)
   //        partial(일부 다름: 학력·학업 상태·취업 상태·전공·소득·실업급여 중복 중 1~2개)
   //        reference(참고용: 나이·거주 시·도가 다르거나, 안 맞는 조건이 3개 이상)
-  // 신청 페이지에 마감 표시가 보이면 perfect·check → check
+  // 5개 구역 (위에서부터 먼저 걸리는 것)
+  //   reference(📋 참고용)        : 나이·거주 시·도가 다르거나, 안 맞는 조건 3개 이상
+  //   partial(⚠️ 일부 다름)        : 학력·학업 상태·취업 상태·전공·소득·실업급여 중복 중 1~2개 안 맞음
+  //   now(🎯 지금 신청할 수 있어요) : 모름 조건 0 + 접수 기간 확실 + 신청 페이지 확인(verified_apply) + 마감 표시 없음
+  //   info(📚 제도 안내)           : 모름 조건 0 + 마감 표시 없음 + 확인된 링크가 공식 안내 페이지(verified_info)뿐
+  //   check(🔍 확인이 필요해요)     : 나머지 (모름 조건 / 기간 불확실 / 확인된 링크 없음 / 마감 표시)
   const HARD_LABELS = ['나이', '거주 시·도'];
   function tierOf(item) {
     const j = item.j;
     if (j.hardMismatch || j.mismatch >= 3) return 'reference';
     if (j.mismatch >= 1) return 'partial';
-    if (j.unknown === 0 && item.period.exact && !closedOf(item.p).length) return 'perfect';
+    const best = bestOf(item.p);
+    const closed = closedOf(item.p).length > 0;
+    if (j.unknown === 0 && !closed && best && best.status === 'verified_apply' && item.period.exact) return 'now';
+    if (j.unknown === 0 && !closed && best && best.status === 'verified_info') return 'info';
     return 'check';
   }
 
@@ -335,14 +343,15 @@
   let currentTab = 'all';
   // 구역(단계)별: 펼침 여부, 보여줄 개수 — 처음엔 위 두 구역만 펼침
   const TIERS = [
-    { id: 'perfect', emoji: '🎯', title: '딱 맞아요', desc: '입력한 조건이 모두 맞고, 접수 기간도 확실해요.' },
-    { id: 'check', emoji: '🔍', title: '맞지만 확인이 필요해요', desc: '안 맞는 조건은 없지만, 공고에 없는 정보나 접수 기간을 직접 확인해야 해요.' },
+    { id: 'now', emoji: '🎯', title: '지금 신청할 수 있어요', desc: '조건이 모두 맞고, 신청 페이지가 확인됐어요. (상시 모집이거나 접수 기간이 공고에 있어요)' },
+    { id: 'check', emoji: '🔍', title: '확인이 필요해요', desc: '안 맞는 조건은 없지만, 접수 기간·신청 링크·공고에 없는 조건 중 직접 확인할 것이 있어요.' },
+    { id: 'info', emoji: '📚', title: '제도 안내', desc: '상시로 운영되는 제도예요. 지금 모집 중인 과정이 있는지는 공식 안내에서 확인해 주세요.' },
     { id: 'partial', emoji: '⚠️', title: '일부 조건이 달라요', desc: '학력·취업 상태·전공·소득 등 조건 1~2개가 달라요. 공고에서 예외가 있는지 확인해 보세요.' },
     { id: 'reference', emoji: '📋', title: '참고용', desc: '지역·나이가 다르거나 안 맞는 조건이 많아요' },
   ];
   const tierState = {
-    perfect: { open: true, visible: PAGE_SIZE }, check: { open: true, visible: PAGE_SIZE },
-    partial: { open: false, visible: PAGE_SIZE }, reference: { open: false, visible: PAGE_SIZE },
+    now: { open: true, visible: PAGE_SIZE }, check: { open: true, visible: PAGE_SIZE },
+    info: { open: false, visible: PAGE_SIZE }, partial: { open: false, visible: PAGE_SIZE }, reference: { open: false, visible: PAGE_SIZE },
   };
 
   function prepare(policies) {
@@ -392,12 +401,13 @@
     const count = function (t) { return shown.filter(function (x) { return x.tier === t; }).length; };
     // 확인용 (개발자 도구 콘솔에서 window.__resultStats 로 볼 수 있음)
     window.__resultStats = {
-      perfect: count('perfect'), check: count('check'), partial: count('partial'), reference: count('reference'),
+      now: count('now'), check: count('check'), info: count('info'), partial: count('partial'), reference: count('reference'),
       expiredSinceFetch: expiredCount,
     };
+    window.__resultItems = shown;   // 확인용 (검증 리포트를 만들 때 씀, 저장하지 않음)
   }
 
-  // 패널에서 마감 표시를 확인한 뒤: 단계가 바뀌면(perfect → check) 목록을 다시 그림
+  // 패널에서 실시간 점검 결과가 미리 점검과 다를 때: 구역을 다시 계산하고 목록을 다시 그림
   function onLinkChecked(item) {
     item.tier = tierOf(item);
     if (item === currentItem) badgesInto($('sheet-badges'), item);
@@ -426,8 +436,8 @@
   function renderSummary() {
     const s = window.__resultStats;
     $('summary-title').innerHTML = '';
-    $('summary-title').append('딱 맞는 정책 ', el('strong', 'accent', s.perfect + '개'), ', 확인이 필요한 정책 ', el('strong', 'accent', s.check + '개'));
-    $('summary-sub').textContent = '일부 조건이 다른 정책 ' + s.partial + '개 · 참고용 ' + s.reference + '개도 아래에 있어요';
+    $('summary-title').append('지금 신청할 수 있는 정책 ', el('strong', 'accent', s.now + '개'), ', 확인이 필요한 정책 ', el('strong', 'accent', s.check + '개'));
+    $('summary-sub').textContent = '제도 안내 ' + s.info + '개 · 일부 조건이 다른 정책 ' + s.partial + '개 · 참고용 ' + s.reference + '개도 아래에 있어요';
     $('summary-hidden').textContent = '조건 개수는 "제한 없음"인 조건을 빼고 셌어요.';
   }
 
@@ -440,19 +450,41 @@
     });
   }
 
-  // 신청 링크: 수집할 때 고른 bestLink (상세 신청 페이지 > 상세 참고 페이지 > 기관 첫 화면). http(s) 주소만 사용
+  // http(s) 주소만 사용
   function safeUrl(raw) {
     let u = String(raw || '').trim();
     if (!u) return null;
     if (/^www\./i.test(u)) u = 'https://' + u;    // "www.xxx.kr" 처럼 앞부분이 빠진 주소 보정
     return /^https?:\/\//i.test(u) ? u : null;
   }
-  function applyUrl(p) {
-    return safeUrl(p.bestLink) || safeUrl(p.aplyUrlAddr) || safeUrl(p.refUrlAddr1);
+  const LINK_ROLE_LABEL = { apply: '신청 링크', ref1: '참고 링크 1', ref2: '참고 링크 2' };
+
+  // ----- 링크 상태 -----
+  // 패널에서 방금 점검한 결과가 있으면 그것, 없으면 데이터 수집 때 미리 점검한 결과(linkStatus)
+  // status: verified_apply / verified_info / broken / search / home / unmatched / mismatch_page / closed_hint / unknown
+  const linkChecks = {};   // plcyNo → 실시간 점검 결과 (이 화면을 연 동안만 기억, 기기에 저장하지 않음)
+  function preResults(p) { return p.linkStatus && Array.isArray(p.linkStatus.links) ? p.linkStatus.links : []; }
+  function linkResultsOf(p) { return linkChecks[p.plcyNo] || preResults(p); }
+  function closedOf(p) { return linkResultsOf(p).filter(function (x) { return x.status === 'closed_hint'; }); }
+  // 가장 좋은 링크: 신청 페이지 확인(verified_apply) > 공식 안내(verified_info). 그 밖의 링크는 버튼에 쓰지 않음
+  const ROLE_ORDER = ['apply', 'ref1', 'ref2'];
+  function bestOf(p) {
+    const list = linkResultsOf(p).filter(function (x) { return safeUrl(x.url); }).slice()
+      .sort(function (a, b) { return ROLE_ORDER.indexOf(a.role) - ROLE_ORDER.indexOf(b.role); });
+    return list.find(function (x) { return x.status === 'verified_apply'; }) ||
+      list.find(function (x) { return x.status === 'verified_info'; }) || null;
   }
-  // 링크 이름: 기관 첫 화면이면 "기관 홈페이지", 아니면 신청 페이지 / 참고 페이지 1·2
-  const LINK_ROLE_LABEL = { apply: '신청 페이지', ref1: '참고 페이지 1', ref2: '참고 페이지 2' };
-  function linkLabel(l) { return l.kind === 'home' ? '기관 홈페이지' : (LINK_ROLE_LABEL[l.role] || '링크'); }
+  // 카드·패널 버튼: [신청하러 가기] / [공식 안내 보기] / [원문 보기](온통청년 상세)
+  function actionOf(p) {
+    const best = bestOf(p);
+    if (best && best.status === 'verified_apply') return { label: '신청하러 가기', url: safeUrl(best.url) };
+    if (best) return { label: '공식 안내 보기', url: safeUrl(best.url) };
+    return { label: '원문 보기', url: YOUTHCENTER_URL + encodeURIComponent(p.plcyNo) };
+  }
+  function checkedDate(p) {
+    if (linkChecks[p.plcyNo]) return '방금 점검';
+    return p.linkStatus && p.linkStatus.checkedAt ? p.linkStatus.checkedAt.slice(0, 10) + ' 점검' : '';
+  }
 
   function ddayBadge(period) {
     if (period.kind === 'always') return el('span', 'dday dday-always', '상시');
@@ -477,6 +509,7 @@
       else chips.push({ cls: 'chip-ok', text: '✓ ' + r.label, order: 2 });
     });
     if (!item.period.exact) chips.push({ cls: 'chip-check', text: '? 접수 기간', order: 1 });
+    if (!bestOf(item.p)) chips.push({ cls: 'chip-check', text: '? 신청 링크', order: 1 });
     if (closedOf(item.p).length) chips.unshift({ cls: 'chip-closed', text: '마감 표시 있음', order: -1 });
     return chips.sort(function (a, b) { return a.order - b.order; });
   }
@@ -513,14 +546,12 @@
     more.addEventListener('click', function () { openSheet(item, more); });
     actions.appendChild(more);
 
-    const url = applyUrl(p);
-    if (url) {
-      const go = el('a', 'btn-line', '신청하러 가기');
-      go.href = url;
-      go.target = '_blank';
-      go.rel = 'noopener noreferrer';
-      actions.appendChild(go);
-    }
+    const act = actionOf(p);
+    const go = el('a', 'btn-line', act.label);
+    go.href = act.url;
+    go.target = '_blank';
+    go.rel = 'noopener noreferrer';
+    actions.appendChild(go);
 
     const done = el('a', 'btn-solid', '신청했어요');
     done.href = 'manage.html?plcyNo=' + encodeURIComponent(p.plcyNo);
@@ -910,9 +941,8 @@
       sec.appendChild(hints);
     }
 
-    // AI 확인 버튼: 기간이 불확실하고, 읽어 볼 페이지(기관 첫 화면이 아닌 링크)가 있을 때만
-    const readable = (p.links || []).some(function (l) { return l.kind !== 'home'; });
-    if (!item.period.exact && readable) {
+    // AI 확인 버튼: 기간이 불확실하고, 정책 내용이 확인된(verified) 링크가 있을 때만
+    if (!item.period.exact && bestOf(p)) {
       const btn = el('button', 'btn-line period-check-btn', '실제 접수 기간 확인');
       btn.type = 'button';
       const out = el('div', 'period-result');
@@ -923,39 +953,70 @@
   }
 
   // --- 🔗 관련 링크 ---
+  // 링크마다 점검 상태를 사람 말로 보여 줌. 실시간 점검 결과가 오면 이 칸만 다시 그림
+  const STATUS_TEXT = {
+    verified_apply: '신청 페이지 ✓', verified_info: '공식 안내 페이지', home: '기관 첫 화면 (정책 이름으로 검색 필요)',
+    search: '검색 페이지', broken: '열리지 않는 페이지', unmatched: '다른 내용 페이지', closed_hint: '마감 표시 있음',
+    unknown: '자동으로 확인하지 못한 페이지',
+  };
+  const STATUS_TONE = {
+    verified_apply: 'ls-ok', verified_info: 'ls-info', closed_hint: 'ls-bad', broken: 'ls-bad', mismatch_page: 'ls-bad',
+  };
+  function statusText(x) {
+    if (x.status === 'mismatch_page') return '대상 나이가 다른 페이지' + (x.ages ? ' (' + x.ages + ')' : '');
+    return STATUS_TEXT[x.status] || '자동으로 확인하지 못한 페이지';
+  }
+  // 버튼에 쓸 링크가 없을 때 이유 한 줄
+  function noBestReason(p) {
+    const list = linkResultsOf(p);
+    if (!list.length) return '공고에 신청·안내 링크가 없어요. 온통청년 원문에서 확인하거나 정책 이름으로 검색해 주세요.';
+    const kinds = [];
+    list.forEach(function (x) { const t = statusText(x).replace(/ \(.*\)$/, ''); if (kinds.indexOf(t) === -1) kinds.push(t); });
+    return '정책 내용이 확인된 신청·안내 페이지가 없어요 (' + kinds.join(', ') + '). 온통청년 원문에서 확인하거나 정책 이름으로 검색해 주세요.';
+  }
   function linksSection(item) {
-    const p = item.p;
     const sec = section('🔗', '관련 링크');
-    if (p.bestLinkKind === 'home') {
+    const box = el('div', 'links-box');
+    sec.appendChild(box);
+    fillLinks(item, box);
+    sec.appendChild(el('p', 'sheet-hint', '링크 상태는 페이지 글자를 규칙으로 살펴 정한 거예요. 신청 전 공식 공고를 꼭 확인하세요.'));
+    return sec;
+  }
+  function fillLinks(item, box) {
+    const p = item.p;
+    box.innerHTML = '';
+    const best = bestOf(p);
+    if (!best) {
       const note = el('div', 'home-note');
-      note.appendChild(el('p', null, '기관 첫 화면으로 연결돼요. 정책 이름으로 검색해 주세요.'));
+      note.appendChild(el('p', null, noBestReason(p)));
       const copy = el('button', 'btn-line copy-name-btn', '정책 이름 복사');
       copy.type = 'button';
       copy.addEventListener('click', function () { copyText(p.plcyNm, copy); });
       note.appendChild(copy);
-      sec.appendChild(note);
+      box.appendChild(note);
     }
     const ul = el('ul', 'link-list');
-    (p.links || []).forEach(function (l) {
-      const url = safeUrl(l.url);
+    linkResultsOf(p).forEach(function (x) {
+      const url = safeUrl(x.url);
       if (!url) return;
       const li = el('li', 'link-item');
-      li.dataset.url = l.url;
-      const a = el('a', 'src-link', linkLabel(l));
+      const a = el('a', 'src-link', LINK_ROLE_LABEL[x.role] || '링크');
       a.href = url; a.target = '_blank'; a.rel = 'noopener noreferrer';
       li.appendChild(a);
-      if (l.url === p.bestLink) li.appendChild(el('span', 'link-best', '신청하러 가기 버튼이 여는 곳'));
+      li.appendChild(el('span', 'link-state ' + (STATUS_TONE[x.status] || 'ls-gray'), statusText(x)));
+      if (best && best.url === x.url) li.appendChild(el('span', 'link-best', '[' + actionOf(p).label + '] 버튼이 여는 곳'));
       ul.appendChild(li);
     });
     const yc = el('li', 'link-item');
-    const ya = el('a', 'src-link', '온통청년에서 보기');
+    const ya = el('a', 'src-link', '온통청년 원문');
     ya.href = YOUTHCENTER_URL + encodeURIComponent(p.plcyNo);
     ya.target = '_blank'; ya.rel = 'noopener noreferrer';
     yc.appendChild(ya);
+    if (!best) yc.appendChild(el('span', 'link-best', '[원문 보기] 버튼이 여는 곳'));
     ul.appendChild(yc);
-    sec.appendChild(ul);
-    sec.appendChild(el('p', 'sheet-hint', '정보는 온통청년 공공데이터 기준이에요. 신청 전 공식 공고를 꼭 확인하세요.'));
-    return sec;
+    box.appendChild(ul);
+    const when = checkedDate(p);
+    if (when) box.appendChild(el('p', 'link-checked', when));
   }
 
   function copyText(text, btn) {
@@ -977,59 +1038,53 @@
     return ok;
   }
 
-  // --- 신청 페이지 마감 표시 확인 (/api/check-link, AI 안 씀) ---
-  // 결과는 이 화면을 연 동안만 기억 (기기에 저장하지 않음). closed_hint만 화면에 보여 줌
-  const linkChecks = {};   // plcyNo → results
+  // --- 링크 실시간 점검 (/api/check-link, AI 안 씀) ---
+  // 패널을 열면 먼저 미리 점검 결과를 보여 주고, 실시간 결과가 다르면 바로 바꾸고 구역도 다시 계산
   function postJson(url, body) {
     return fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
       .then(function (res) {
         return res.json().catch(function () { return null; }).then(function (data) { return { status: res.status, data: data }; });
       });
   }
+  function statusKey(p) { return linkResultsOf(p).map(function (x) { return x.url + '=' + x.status; }).join('|'); }
   function checkLinks(item) {
     const p = item.p;
-    if (!(p.links || []).some(function (l) { return l.kind === 'detail'; })) return;
-    showLinkChecks(item);                       // 먼저 미리 점검한 결과를 보여 주고
-    if (linkChecks[p.plcyNo]) return;           // 이 화면에서 이미 실시간으로 확인했으면 다시 안 부름
+    showLinkChecks(item);                       // 먼저 미리 점검한 결과
+    if (!(p.links || []).length || linkChecks[p.plcyNo]) return;   // 링크가 없거나 이 화면에서 이미 확인함
     postJson('api/check-link', { plcyNo: p.plcyNo }).then(function (r) {
       if (r.status !== 200 || !r.data || !r.data.ok) return;   // 확인하지 못하면 미리 점검한 결과를 그대로 둠
-      const before = closedKey(p);
+      const before = statusKey(p);
       // 실시간 결과로 바꿈. 단, 지금 못 읽은 링크(unknown)는 미리 점검한 결과를 유지
-      const pre = p.linkStatus && Array.isArray(p.linkStatus.links) ? p.linkStatus.links : [];
+      const pre = preResults(p);
       linkChecks[p.plcyNo] = (r.data.results || []).map(function (x) {
-        if (x.result !== 'unknown') return x;
+        if (x.status !== 'unknown') return x;
         return pre.find(function (y) { return y.url === x.url; }) || x;
       });
-      if (closedKey(p) === before) { showLinkChecks(item); return; }   // 같으면 "미리 점검" 안내만 지움
-      showLinkChecks(item);
-      onLinkChecked(item);   // 미리 점검한 결과와 다를 때만 여기까지 옴
+      showLinkChecks(item);                     // "방금 점검"으로 표시
+      if (statusKey(p) !== before) onLinkChecked(item);   // 미리 점검과 다를 때만 구역을 다시 계산
     }).catch(function () { /* 표시하지 않음 */ });
   }
-  // 마감 표시: 패널에서 방금 확인한 결과가 있으면 그것, 없으면 데이터 수집 때 미리 점검한 결과(linkStatus)
-  function linkResultsOf(p) {
-    if (linkChecks[p.plcyNo]) return linkChecks[p.plcyNo];
-    return p.linkStatus && Array.isArray(p.linkStatus.links) ? p.linkStatus.links : [];
-  }
-  function closedOf(p) {
-    return linkResultsOf(p).filter(function (x) { return x.result === 'closed_hint'; });
-  }
-  function closedKey(p) { return closedOf(p).map(function (x) { return x.url; }).join('|'); }
   function showLinkChecks(item) {
     if (sheet.hidden || currentItem !== item) return;
     const box = sheetBody.querySelector('.closed-alerts');
-    if (!box) return;
-    box.innerHTML = '';
-    sheetBody.querySelectorAll('.link-closed').forEach(function (n) { n.remove(); });
-    closedOf(item.p).forEach(function (x) {   // no_hint · unknown은 표시하지 않음
-      const line = el('p', 'closed-alert', '신청 페이지에 마감 표시가 보여요 (' + (LINK_ROLE_LABEL[x.role] || '링크') + ')');
-      if (x.snippet) line.appendChild(el('span', 'closed-snippet', '페이지 글: "' + x.snippet + '"'));
-      if (!linkChecks[item.p.plcyNo] && item.p.linkStatus && item.p.linkStatus.checkedAt) {
-        line.appendChild(el('span', 'closed-snippet', item.p.linkStatus.checkedAt.slice(0, 10) + ' 미리 점검한 결과예요'));
-      }
-      box.appendChild(line);
-      const li = Array.prototype.find.call(sheetBody.querySelectorAll('.link-item'), function (n) { return n.dataset.url === x.url; });
-      if (li && !li.querySelector('.link-closed')) li.appendChild(el('span', 'link-closed', '마감 표시 있음'));
-    });
+    if (box) {
+      box.innerHTML = '';
+      closedOf(item.p).forEach(function (x) {
+        const line = el('p', 'closed-alert', '신청 페이지에 마감 표시가 보여요 (' + (LINK_ROLE_LABEL[x.role] || '링크') + ')');
+        if (x.snippet) line.appendChild(el('span', 'closed-snippet', '페이지 글: "' + x.snippet + '" · ' + checkedDate(item.p)));
+        box.appendChild(line);
+      });
+    }
+    const links = sheetBody.querySelector('.links-box');
+    if (links) fillLinks(item, links);
+    setSheetAction(item);
+  }
+  function setSheetAction(item) {
+    const act = actionOf(item.p);
+    const apply = $('sheet-apply');
+    apply.hidden = false;
+    apply.textContent = act.label;
+    apply.href = act.url;
   }
 
   // --- 실제 접수 기간 확인 (/api/check-period, 버튼을 눌렀을 때만 AI 호출) ---
@@ -1082,10 +1137,7 @@
     sheetBody.append(matchSection(item), periodSection(item), infoSection(item), docsSection(item), stepsSection(item), linksSection(item));
     sheetBody.scrollTop = 0;
 
-    const apply = $('sheet-apply');
-    const url = applyUrl(p);
-    apply.hidden = !url;
-    if (url) apply.href = url;
+    setSheetAction(item);
     $('sheet-done').href = 'manage.html?plcyNo=' + encodeURIComponent(p.plcyNo);
 
     backdrop.hidden = false;
