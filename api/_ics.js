@@ -65,19 +65,35 @@ function eventFor(step, today) {
   };
 }
 
-// ----- .ics 글자 규칙 -----
-function esc(text) {
-  return String(text || '').replace(/\\/g, '\\\\').replace(/;/g, '\\;').replace(/,/g, '\\,').replace(/\r?\n/g, '\\n');
+// ----- .ics 글자 규칙 (RFC 5545) -----
+// 1) 정리: 제어 문자·이모지 제거 (아이폰 캘린더가 이상한 글자에서 멈추지 않게), 줄바꿈은 \n 하나로
+const CONTROL_RE = /[\u0000-\u0009\u000b\u000c\u000e-\u001f\u007f-\u009f]/g;
+const EMOJI_RE = /[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{FE00}-\u{FE0F}\u{200D}\u{20E3}\u{E0000}-\u{E007F}]/gu;
+function cleanText(text, maxChars) {
+  let t = String(text || '').replace(/\r\n?/g, '\n').replace(CONTROL_RE, ' ').replace(EMOJI_RE, '')
+    .replace(/[ \t]+/g, ' ').replace(/ *\n */g, '\n').trim();
+  if (maxChars && Array.from(t).length > maxChars) t = Array.from(t).slice(0, maxChars - 1).join('') + '…';
+  return t;
 }
-// 한 줄은 75바이트까지 (한글은 3바이트라 글자 중간에서 자르지 않게 글자 단위로 셈)
+// 2) TEXT 값 이스케이프: \ → \\, ; → \;, , → \,, 줄바꿈 → \n (실제 줄바꿈은 남기지 않음)
+function esc(text) {
+  return String(text || '').replace(/\\/g, '\\\\').replace(/;/g, '\\;').replace(/,/g, '\\,').replace(/\n/g, '\\n');
+}
+// SUMMARY·DESCRIPTION·LOCATION 같은 글자 속성 한 줄
+function textProp(name, text, maxChars) { return name + ':' + esc(cleanText(text, maxChars)); }
+const DESC_MAX = 500;          // DESCRIPTION 최대 글자 수
+const SUMMARY_MAX = 120;
+// 3) 한 줄은 75바이트까지. 바이트로 세되 한글(3바이트) 글자 중간과 "\," 같은 이스케이프 두 글자 사이에서는 자르지 않음.
+//    이어지는 줄은 공백 한 칸으로 시작 (그 공백도 75바이트에 포함)
 function fold(line) {
+  const units = String(line).match(/\\.|[\s\S]/gu) || [];   // 이스케이프(\x)는 한 덩어리, 나머지는 글자 하나씩
   const out = [];
-  let cur = '', bytes = 0, limit = 75;
-  for (const ch of line) {
-    const b = Buffer.byteLength(ch);
-    if (bytes + b > limit) { out.push(cur); cur = ' '; bytes = 1; limit = 75; }
-    cur += ch; bytes += b;
-  }
+  let cur = '', bytes = 0;
+  units.forEach(function (u) {
+    const b = Buffer.byteLength(u, 'utf8');
+    if (bytes + b > 75) { out.push(cur); cur = ' '; bytes = 1; }
+    cur += u; bytes += b;
+  });
   out.push(cur);
   return out.join('\r\n');
 }
@@ -97,6 +113,11 @@ function itemLines(step) {
   });
   return order.map(function (k) { return KIND_LABEL[k] + ': ' + groups[k].join(', '); });
 }
+// [장소] 항목 → 일정의 장소(LOCATION)
+function placeOf(step) {
+  return (step.items || []).filter(function (x) { return x.kind === '장소' && !x.done; })
+    .map(function (x) { return x.text; }).join(' / ');
+}
 function detailLines(step) {
   return [step.summary].concat(itemLines(step)).filter(Boolean);
 }
@@ -105,7 +126,7 @@ function detailLines(step) {
 function buildIcs(plan, steps, today) {
   const lines = [
     'BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:' + PRODID, 'CALSCALE:GREGORIAN', 'METHOD:PUBLISH',
-    'X-WR-CALNAME:' + esc('놓치지 마! · ' + plan.policyName), 'X-WR-TIMEZONE:' + TZ,
+    textProp('X-WR-CALNAME', '놓치지 마 · ' + plan.policyName, SUMMARY_MAX), 'X-WR-TIMEZONE:' + TZ,
     'BEGIN:VTIMEZONE', 'TZID:' + TZ,
     'BEGIN:STANDARD', 'DTSTART:19700101T000000', 'TZOFFSETFROM:+0900', 'TZOFFSETTO:+0900', 'TZNAME:KST', 'END:STANDARD',
     'END:VTIMEZONE',
@@ -116,8 +137,9 @@ function buildIcs(plan, steps, today) {
     const ev = eventFor(s, today);
     if (!ev) return;
     count++;
-    const desc = [plan.policyName].concat(detailLines(s), [s.note, s.warning ? '⚠ ' + s.warning : '', s.evidence ? '근거: ' + s.evidence : '',
+    const desc = [plan.policyName].concat(detailLines(s), [s.note, s.warning ? '주의: ' + s.warning : '', s.evidence ? '근거: ' + s.evidence : '',
       '관리 화면: ' + plan.manageUrl, s.sourceUrl ? '출처: ' + s.sourceUrl : '']).filter(Boolean).join('\n');
+    const place = placeOf(s);
     lines.push('BEGIN:VEVENT');
     // 같은 정책·단계는 같은 UID → 다시 받으면 캘린더가 새로 만들지 않고 고쳐 씀
     lines.push('UID:' + uidPart(plan.plcyNo) + '-' + uidPart(s.id) + '-' + ev.kind + '@dontmiss');
@@ -130,11 +152,12 @@ function buildIcs(plan, steps, today) {
       lines.push('DTEND;TZID=' + TZ + ':' + compact(ev.start) + 'T091500');
     }
     if (ev.rrule) lines.push('RRULE:' + ev.rrule);
-    lines.push('SUMMARY:' + esc('[놓치지 마!] ' + ev.summary));
-    lines.push('DESCRIPTION:' + esc(desc));
+    lines.push(textProp('SUMMARY', '[놓치지 마] ' + ev.summary, SUMMARY_MAX));
+    lines.push(textProp('DESCRIPTION', desc, DESC_MAX));
+    if (place) lines.push(textProp('LOCATION', place, 200));
     if (plan.manageUrl) lines.push('URL:' + plan.manageUrl);
     lines.push('TRANSP:TRANSPARENT');   // 다른 일정과 겹쳐도 "바쁨"으로 막지 않게
-    lines.push('BEGIN:VALARM', 'ACTION:DISPLAY', 'DESCRIPTION:' + esc(ev.alarmText), 'TRIGGER:' + ev.alarm, 'END:VALARM');
+    lines.push('BEGIN:VALARM', 'ACTION:DISPLAY', textProp('DESCRIPTION', ev.alarmText, SUMMARY_MAX), 'TRIGGER:' + ev.alarm, 'END:VALARM');
     lines.push('END:VEVENT');
   });
   lines.push('END:VCALENDAR');
@@ -147,13 +170,15 @@ function googleLink(plan, step, today) {
   if (!ev) return '';
   const q = new URLSearchParams();
   q.set('action', 'TEMPLATE');
-  q.set('text', '[놓치지 마!] ' + ev.summary);
+  q.set('text', cleanText('[놓치지 마] ' + ev.summary, SUMMARY_MAX));
   q.set('dates', ev.allDay
     ? compact(ev.start) + '/' + compact(ev.end)
     : compact(ev.start) + 'T090000/' + compact(ev.start) + 'T091500');
   q.set('ctz', TZ);
   if (ev.rrule) q.set('recur', 'RRULE:' + ev.rrule);
-  q.set('details', [plan.policyName].concat(detailLines(step), [step.note, '관리 화면: ' + plan.manageUrl]).filter(Boolean).join('\n'));
+  q.set('details', cleanText([plan.policyName].concat(detailLines(step), [step.note, '관리 화면: ' + plan.manageUrl]).filter(Boolean).join('\n'), DESC_MAX));
+  const place = placeOf(step);
+  if (place) q.set('location', cleanText(place, 200));
   return 'https://calendar.google.com/calendar/render?' + q.toString();
 }
 
@@ -278,5 +303,5 @@ function readCalendarLink(d, sig, secret) {
 
 module.exports = {
   buildIcs, googleLink, alarmLabel, eventFor, nextMonday, nextFirstOfMonth, itemLines, cleanItems,
-  cleanSteps, makeCalendarLink, readCalendarLink, LINK_PATH,
+  cleanSteps, makeCalendarLink, readCalendarLink, LINK_PATH, esc, fold, cleanText,
 };
