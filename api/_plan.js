@@ -85,6 +85,12 @@ function cleanRecord(r, itemChars) {
     }).filter(Boolean);
     if (ex.length) out.extraSteps = ex;
   }
+  // 문자에 월이 없어 가장 가까운 날로 정한 날짜 표시 ("예상"으로 보여 줌)
+  if (r.dateEstimated && typeof r.dateEstimated === 'object') {
+    const est = {};
+    Object.keys(r.dateEstimated).slice(0, 20).forEach(function (id) { if (ID_RE.test(id) && r.dateEstimated[id] === true) est[id] = true; });
+    if (Object.keys(est).length) out.dateEstimated = est;
+  }
   // 단계별 요약·항목 (안내 문자 AI 정리에서 사용자가 확인하고 저장한 것만)
   if (r.stepNotes && typeof r.stepNotes === 'object') {
     const notes = {};

@@ -44,7 +44,7 @@ function prettyDate(ymd) {
   return p[1] + '월 ' + p[2] + '일 (' + '일월화수목금토'[d.getUTCDay()] + ')';
 }
 function dateText(s) {
-  if (s.type === 'exact' && s.date) return prettyDate(s.date);
+  if (s.type === 'exact' && s.date) return prettyDate(s.date) + (s.estimated ? ' (예상 · 문자에 월이 없어 가장 가까운 날짜로 정했어요)' : '');
   if (s.type === 'monthly') return '매월 반복';
   return '날짜 미정';
 }
@@ -196,7 +196,8 @@ module.exports = async function handler(req, res) {
     policyName: policyName,
     plcyNo: plcyNo,
     appliedAt: L.isYmd(rawPlan.appliedAt) ? rawPlan.appliedAt : '',
-    manageUrl: base ? base + '/manage.html' : '',
+    manageUrl: base ? base + '/manage.html' : '',   // 메일 본문용 (캘린더 일정에는 넣지 않음)
+    siteUrl: base,                                  // 캘린더 일정 URL 칸용 (사이트 주소만)
   };
 
   const user = process.env.GMAIL_USER;

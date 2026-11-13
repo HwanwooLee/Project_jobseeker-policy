@@ -119,7 +119,7 @@ module.exports = async function handler(req, res) {
 
   const today = L.todayKst();
   const base = L.publicBaseUrl(req);
-  const plan = Object.assign({}, got.plan, { manageUrl: base ? base + '/manage.html' : '' });
+  const plan = Object.assign({}, got.plan, { siteUrl: base });   // 일정 URL 칸에는 사이트 주소만
   const ics = ICS.buildIcs(plan, got.steps, today);
   if (!ics.count) {
     return page(res, 200, '추가할 일정 없음', '<div class="k">놓치지 마!</div><h1>지금 캘린더에 넣을 일정이 없어요</h1>' +

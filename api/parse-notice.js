@@ -2,8 +2,9 @@
    POST /api/parse-notice — 안내 문자·메일을 AI(Claude)가 일정으로 정리
    받는 값: { policyName, text(최대 3,000자) }
    남용 방지: 같은 IP는 1분에 3번 + 한 달 전체 한도 (check-period와 함께 셈, api/_ai.js)
-   돌려주는 값: { ok, items: [{ step, date("YYYY-MM-DD"|null), dateType("exact"|"approx"|"none"),
+   돌려주는 값: { ok, items: [{ step, date("YYYY-MM-DD"|null), dateType("exact"|"estimated"|"approx"|"none"),
                                evidence, evidenceFound, summary, items: [{ kind, text }], warnings[] }] }
+     estimated: 문자에 "25일"처럼 일만 있을 때 — 붙여넣은 날 기준으로 다가오는 가장 가까운 그날로 서버가 정함 (dateNote에 안내)
      summary: 그 단계에서 할 일 한 줄 요약
      items  : 문자에 적힌 서류·할 일·준비물·장소·연락처 (원문에서 찾지 못한 항목은 서버가 뺌)
    - Claude 호출은 api/_ai.js (키는 환경변수 ANTHROPIC_API_KEY에서만 읽음)
@@ -36,6 +37,8 @@ const SYSTEM = [
   '- step: 사용자가 할 일이나 확인할 일을 짧은 한국어 단계 이름으로 써 (예: "1차 상담 참석", "서류 보완 제출").',
   '- date: 월과 일이 모두 적혀 있을 때만 "YYYY-MM-DD"로 써. 연도가 빠져 있으면 기준일 이후 가장 가까운 그 날짜의 연도를 붙여. 시간은 넣지 마.',
   '- dateType: 날짜가 정확히 적혀 있으면 "exact", "약 2주 후"·"이달 말"처럼 대략적이면 "approx"(이때 date는 null), 날짜가 없으면 "none".',
+  '- 월 없이 "25일"처럼 일만 적혀 있으면: date는 null, dateType은 "estimated", dayOnly에 그 숫자(예: 25)를 넣어. 월은 절대 추측하지 마.',
+  '  (월과 일이 다 있거나 날짜가 없으면 dayOnly는 null)',
   '- evidence: 그 단계의 근거가 된 원문 문장을 한 글자도 바꾸지 말고 그대로 옮겨.',
   '- summary: 그 단계에서 사용자가 할 일을 한 줄로 요약해 (예: "서류 3가지를 이메일로 제출"). 글에 없는 내용은 넣지 마.',
   '- items: 그 단계에 딸린 서류·할 일·준비물·장소·연락처를 하나씩 나눠 넣어.',
@@ -64,7 +67,8 @@ const SCHEMA = {
         properties: {
           step: { type: 'string' },
           date: { anyOf: [{ type: 'string', format: 'date' }, { type: 'null' }] },
-          dateType: { type: 'string', enum: ['exact', 'approx', 'none'] },
+          dateType: { type: 'string', enum: ['exact', 'estimated', 'approx', 'none'] },
+          dayOnly: { anyOf: [{ type: 'integer' }, { type: 'null' }] },
           evidence: { type: 'string' },
           summary: { type: 'string' },
           items: {
@@ -80,7 +84,7 @@ const SCHEMA = {
             },
           },
         },
-        required: ['step', 'date', 'dateType', 'evidence', 'summary', 'items'],
+        required: ['step', 'date', 'dateType', 'dayOnly', 'evidence', 'summary', 'items'],
         additionalProperties: false,
       },
     },
@@ -123,7 +127,24 @@ function weekdayWarning(date, evidence) {
   return '';
 }
 
-function cleanItems(raw, sourceText) {
+// "25일"처럼 일만 있을 때: 기준일(붙여넣은 날, 한국 시간)부터 다가오는 가장 가까운 그날 (오늘 포함)
+// 그날이 없는 달(예: 31일이 없는 달)은 건너뜀
+function nearestDay(day, today) {
+  const t = today.split('-').map(Number);
+  for (let k = 0; k < 13; k++) {
+    const y = t[0] + Math.floor((t[1] - 1 + k) / 12), m = (t[1] - 1 + k) % 12;
+    const d = new Date(Date.UTC(y, m, day));
+    if (d.getUTCMonth() !== m) continue;                 // 그 달에 그날이 없음
+    const ymd = d.toISOString().slice(0, 10);
+    if (ymd >= today) return ymd;
+  }
+  return null;
+}
+function dayMentioned(day, text) {
+  return new RegExp('(^|[^0-9])' + day + '\\s*일').test(String(text || ''));
+}
+
+function cleanItems(raw, sourceText, today) {
   const src = normalize(sourceText);
   if (!raw || !Array.isArray(raw.items)) return [];
   return raw.items.slice(0, MAX_ITEMS).map(function (it) {
@@ -131,10 +152,21 @@ function cleanItems(raw, sourceText) {
     const step = L.oneLine(it.step, 60);
     if (!step) return null;
     let date = typeof it.date === 'string' && L.isYmd(it.date) ? it.date : null;
-    let dateType = ['exact', 'approx', 'none'].indexOf(it.dateType) !== -1 ? it.dateType : 'none';
-    if (dateType !== 'exact') date = null;              // 정확한 날짜가 아니면 날짜를 쓰지 않음
-    if (dateType === 'exact' && !date) dateType = 'none';
+    let dateType = ['exact', 'estimated', 'approx', 'none'].indexOf(it.dateType) !== -1 ? it.dateType : 'none';
     const evidence = L.str(it.evidence, 400);
+    let dateNote = '';
+    const day = Number(it.dayOnly);
+    // 근거 문장에 "11월 25일"처럼 월이 있는데 AI가 estimated라고 했으면 → 월이 있는 날짜로 봄 (AI 날짜가 올바를 때만)
+    if (dateType === 'estimated' && Number.isInteger(day) && new RegExp('\\d{1,2}\\s*월\\s*' + day + '\\s*일').test(evidence)) {
+      dateType = date ? 'exact' : 'none';
+    }
+    if (dateType === 'estimated') {
+      // 일만 있는 날짜 → 서버가 정함 (AI가 준 date는 쓰지 않음). 그 숫자가 근거 문장에 "N일"로 있어야 함
+      date = Number.isInteger(day) && day >= 1 && day <= 31 && dayMentioned(day, evidence) ? nearestDay(day, today) : null;
+      if (date) dateNote = '문자에 월이 없어 가장 가까운 날짜로 정했어요';
+      else dateType = 'none';
+    } else if (dateType !== 'exact') date = null;       // 정확한 날짜가 아니면 날짜를 쓰지 않음
+    if (dateType === 'exact' && !date) dateType = 'none';
     const evidenceFound = !!evidence && src.indexOf(normalize(evidence)) !== -1;
     const warnings = [];
     if (!evidenceFound) warnings.push('근거 문장이 원문과 정확히 일치하지 않아요. 원문을 다시 확인해 주세요.');
@@ -142,7 +174,7 @@ function cleanItems(raw, sourceText) {
     if (wd) warnings.push(wd);
     const sub = cleanSubItems(it.items, sourceText);
     if (sub.dropped) warnings.push('원문에서 찾지 못한 항목 ' + sub.dropped + '개는 뺐어요.');
-    return { step: step, date: date, dateType: dateType, evidence: evidence, evidenceFound: evidenceFound,
+    return { step: step, date: date, dateType: dateType, dateNote: dateNote, evidence: evidence, evidenceFound: evidenceFound,
       summary: L.oneLine(it.summary, 80), items: sub.items, warnings: warnings };
   }).filter(Boolean);
 }
@@ -175,5 +207,5 @@ module.exports = async function handler(req, res) {
   });
   if (!result.ok) return L.fail(res, result.status, result.message);
 
-  return L.send(res, 200, { ok: true, items: cleanItems(result.json, text), model: AI.MODEL });
+  return L.send(res, 200, { ok: true, items: cleanItems(result.json, text, L.todayKst()), model: AI.MODEL });
 };

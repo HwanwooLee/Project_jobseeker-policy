@@ -23,8 +23,9 @@
   const WEEKLY_DAYS = 7;         // "결과 안내 받으셨나요?"를 다시 묻는 간격
   const SOON_DAYS = 7;           // 이 날짜 안에 있는 일정은 "지금 할 일"에서 가장 먼저
 
-  const DATE_TYPE_LABEL = { exact: '정확한 날짜', approx: '예상', none: '날짜 미정', monthly: '매월 반복' };
-  const DATE_TYPE_CLASS = { exact: 'tl-exact', approx: 'tl-estimate', none: 'tl-unknown', monthly: 'tl-monthly' };
+  const DATE_TYPE_LABEL = { exact: '정확한 날짜', estimated: '예상 날짜', approx: '예상', none: '날짜 미정', monthly: '매월 반복' };
+  const DATE_TYPE_CLASS = { exact: 'tl-exact', estimated: 'tl-estimate', approx: 'tl-estimate', none: 'tl-unknown', monthly: 'tl-monthly' };
+  const ESTIMATED_NOTE = '문자에 월이 없어 가장 가까운 날짜로 정했어요';
   const CUSTOM_DATES = [
     { key: 'docDeadline', label: '서류 제출 기한', stepTitle: '서류 제출 기한' },
     { key: 'resultDate', label: '결과 발표일', stepTitle: '결과 발표' },
@@ -47,6 +48,7 @@
   function today() { const d = new Date(); return new Date(d.getFullYear(), d.getMonth(), d.getDate()); }
   function daysFromToday(s) { const d = parseYmd(s); return d ? Math.round((d - today()) / 86400000) : null; }
   function thisMonth() { const d = today(); return d.getFullYear() + '-' + pad(d.getMonth() + 1); }
+  function monthDay(s) { const d = parseYmd(s); return d ? (d.getMonth() + 1) + '월 ' + d.getDate() + '일' : ''; }
   function prettyDate(s) {
     const d = parseYmd(s);
     if (!d) return '';
@@ -125,6 +127,7 @@
       steps: app.steps || {}, customDates: app.customDates || {}, stepDates: app.stepDates || {},
       dateEvidence: app.dateEvidence || {}, extraSteps: app.extraSteps || [], snapshot: snap,
       stepNotes: app.stepNotes || {},   // 단계별 요약·항목(서류·할 일 등)과 체크 상태
+      dateEstimated: app.dateEstimated || {},   // 문자에 월이 없어 가장 가까운 날로 정한 날짜
       docChecked: Object.keys(loadDocs(app.plcyNo).checked || {}),   // 제출 서류 체크 (링크가 길면 서버가 가장 먼저 뺌)
     };
   }
@@ -237,6 +240,7 @@
         s.type = 'exact'; s.date = manualDate; s.weeklyCheck = '';
         s.source = { manual: true, text: evidence ? '안내 문자에서 찾은 날짜' : '내가 입력한 날짜' };
         s.evidence = evidence;
+        s.estimated = !!(app.dateEstimated && app.dateEstimated[d.customDateKey || d.id]);
       }
       s.monthly = s.type === 'monthly';
       s.done = s.monthly ? (state.doneMonths || []).indexOf(thisMonth()) !== -1 : !!state.done;
@@ -264,6 +268,7 @@
         id: x.id, title: x.title, type: x.date ? 'exact' : 'none', date: x.date || null, note: '', warning: '', weeklyCheck: '',
         source: { manual: true, text: x.date ? '안내 문자에서 찾은 날짜' : '안내 문자에서 찾은 할 일' }, evidence: x.evidence || '',
         extra: true, state: state, monthly: false, done: !!state.done,
+        estimated: !!(x.date && app.dateEstimated && app.dateEstimated[x.id]),
       });
     });
 
@@ -303,7 +308,8 @@
   function dateLine(s) {
     if (s.type === 'exact' && s.date) {
       const n = daysFromToday(s.date);
-      return prettyDate(s.date) + (n !== null && !s.done && s.id !== 'applied' ? ' · ' + ddayText(n) : '');
+      return prettyDate(s.date) + (s.estimated ? ' (예상)' : '') + (n !== null && !s.done && s.id !== 'applied' ? ' · ' + ddayText(n) : '') +
+        (s.estimated ? ' · ' + ESTIMATED_NOTE : '');
     }
     if (s.type === 'approx') return s.weeks ? '예상: 신청 후 약 ' + s.weeks + '주' : '예상 일정';
     if (s.type === 'monthly') return '매월 반복 · 이번 달(' + Number(thisMonth().slice(5)) + '월) ' + (s.done ? '완료' : '아직');
@@ -624,6 +630,7 @@
         app.customDates = app.customDates || {};
         if (input.value) app.customDates[c.key] = input.value; else delete app.customDates[c.key];
         if (app.dateEvidence) delete app.dateEvidence[c.key];   // 직접 고쳤으면 AI 근거는 떼어냄
+        if (app.dateEstimated) delete app.dateEstimated[c.key];
         markChanged(app);
         saveApps();
         render();
@@ -697,6 +704,7 @@
           done: s.monthly ? false : !!s.done,       // 매월 할 일은 이번 달 체크와 관계없이 앞으로도 알림
           note: s.note || '', warning: s.warning || '', evidence: s.evidence || '',
           sourceUrl: (s.source && s.source.url) || '',
+          estimated: !!s.estimated,
           summary: s.summary || '', items: (s.items || []).map(function (x) { return { kind: x.kind, text: x.text, done: !!x.done }; }),
         };
       });
@@ -824,6 +832,10 @@
     cur.items = cur.items.slice(0, 10);
   }
 
+  function markEstimated(app, key, item) {
+    app.dateEstimated = app.dateEstimated || {};
+    if (item.date && item.dateType === 'estimated') app.dateEstimated[key] = true; else delete app.dateEstimated[key];
+  }
   function saveAiItem(app, steps, item, targetId) {
     app.dateEvidence = app.dateEvidence || {};
     if (targetId === 'new') {
@@ -831,6 +843,7 @@
       app.extraSteps = app.extraSteps || [];
       app.extraSteps.push({ id: newId, title: item.step.slice(0, 40), date: item.date || null, evidence: item.evidence });
       saveNotes(app, newId, item);
+      markEstimated(app, newId, item);
       markChanged(app);
       saveApps();
       return newId;
@@ -844,10 +857,12 @@
         app.customDates = app.customDates || {};
         app.customDates[target.dateKey] = item.date;
         app.dateEvidence[target.dateKey] = item.evidence;
+        markEstimated(app, target.dateKey, item);
       } else {                                  // 다른 단계 → 단계 날짜로 저장
         app.stepDates = app.stepDates || {};
         app.stepDates[target.id] = item.date;
         app.dateEvidence[target.id] = item.evidence;
+        markEstimated(app, target.id, item);
       }
       markChanged(app);
       saveApps();
@@ -932,8 +947,10 @@
       const head = el('div', 'tl-head');
       head.append(el('span', 'tl-title', item.step), el('span', 'tl-type ' + DATE_TYPE_CLASS[item.dateType], DATE_TYPE_LABEL[item.dateType]));
       box.appendChild(head);
-      if (item.date) box.appendChild(el('p', 'tl-when', prettyDate(item.date)));
+      if (item.date && item.dateType === 'estimated') box.appendChild(el('p', 'tl-when', monthDay(item.date) + '(예상) · ' + (item.dateNote || ESTIMATED_NOTE)));
+      else if (item.date) box.appendChild(el('p', 'tl-when', prettyDate(item.date)));
       else box.appendChild(el('p', 'ai-nodate', '날짜 없음 · 안내를 받으면 직접 입력해 주세요'));
+      if (!st.saved[i]) box.appendChild(aiDateEditor(app, item, i));
       if (item.summary) box.appendChild(el('p', 'tl-summary', item.summary));
       if (!st.saved[i]) box.appendChild(aiItemEditor(item));
       else if (item.items && item.items.length) {
@@ -987,6 +1004,26 @@
       wrap.appendChild(box);
     });
     return wrap;
+  }
+
+  // 저장 전에 날짜 고치기 (직접 고치면 "예상"이 아니라 내가 정한 날짜로 봄)
+  function aiDateEditor(app, item, i) {
+    const row = el('div', 'ai-date-row');
+    const id = 'ai-date-' + app.plcyNo + '-' + i;
+    const label = el('label', 'custom-label', item.date ? '날짜 고치기' : '날짜 넣기');
+    label.htmlFor = id;
+    const input = el('input', 'date-input');
+    input.type = 'date';
+    input.id = id;
+    input.value = item.date || '';
+    input.addEventListener('change', function () {
+      item.date = input.value || null;
+      item.dateType = input.value ? 'exact' : 'none';
+      item.dateNote = '';
+      render();
+    });
+    row.append(label, input);
+    return row;
   }
 
   // AI가 찾은 항목(서류·할 일 등) 고치기·지우기 — 저장 전까지 화면 메모리에서만 바뀜

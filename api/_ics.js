@@ -87,18 +87,32 @@ const SUMMARY_MAX = 120;
 //    이어지는 줄은 공백 한 칸으로 시작 (그 공백도 75바이트에 포함)
 function fold(line) {
   const units = String(line).match(/\\.|[\s\S]/gu) || [];   // 이스케이프(\x)는 한 덩어리, 나머지는 글자 하나씩
+  // 띄어쓰기 바로 앞에서는 접지 않음 (이어지는 줄이 공백 두 칸으로 시작하면 공백을 같이 지우는 캘린더가 있어서)
+  //  → 그럴 땐 한 글자 앞에서 접어 그 글자를 다음 줄로 넘김
   const out = [];
-  let cur = '', bytes = 0;
+  let cur = [], bytes = 0;
   units.forEach(function (u) {
     const b = Buffer.byteLength(u, 'utf8');
-    if (bytes + b > 75) { out.push(cur); cur = ' '; bytes = 1; }
-    cur += u; bytes += b;
+    if (bytes + b > 75) {
+      let carry = [];
+      if (u === ' ' && cur.length > 2) carry = [cur.pop()];
+      out.push(cur.join(''));
+      cur = [' '].concat(carry);
+      bytes = 1 + carry.reduce(function (n, x) { return n + Buffer.byteLength(x, 'utf8'); }, 0);
+    }
+    cur.push(u); bytes += b;
   });
-  out.push(cur);
+  out.push(cur.join(''));
   return out.join('\r\n');
 }
+// 메모에는 관리 링크를 넣지 않음 (링크에 관리 기록이 담겨 길고, 본인만 써야 해서)
+const MANAGE_NOTE = '관리 화면은 받은 메일의 [관리 화면 열기]로 들어가세요.';
 function stamp() { return new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, ''); }   // 20261112T080000Z
-function uidPart(s) { return String(s).replace(/[^A-Za-z0-9-]/g, '').slice(0, 60) || 'x'; }
+// UID: 영문·숫자·@·- 만, 짧게. 같은 정책·단계·종류면 늘 같은 값 → 다시 받으면 캘린더가 새로 만들지 않고 고쳐 씀
+function uidOf(plcyNo, stepId, kind) {
+  const h = crypto.createHash('sha256').update(String(plcyNo) + '|' + String(stepId) + '|' + String(kind)).digest('hex').slice(0, 20);
+  return 'dm-' + h + '@dontmiss';
+}
 
 // ----- 단계에 딸린 항목(서류·할 일 등) → 일정 설명 글 -----
 // 예: "준비할 서류: 주민등록등본, 졸업증명서, 통장 사본" (아직 안 한 항목만)
@@ -122,7 +136,7 @@ function detailLines(step) {
   return [step.summary].concat(itemLines(step)).filter(Boolean);
 }
 
-// plan: { policyName, plcyNo, manageUrl }, steps: [{ id, title, type, date, done, note, warning, sourceUrl, summary, items }]
+// plan: { policyName, plcyNo, siteUrl(사이트 주소, 짧게) }, steps: [{ id, title, type, date, done, note, warning, sourceUrl, summary, items }]
 function buildIcs(plan, steps, today) {
   const lines = [
     'BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:' + PRODID, 'CALSCALE:GREGORIAN', 'METHOD:PUBLISH',
@@ -138,11 +152,11 @@ function buildIcs(plan, steps, today) {
     if (!ev) return;
     count++;
     const desc = [plan.policyName].concat(detailLines(s), [s.note, s.warning ? '주의: ' + s.warning : '', s.evidence ? '근거: ' + s.evidence : '',
-      '관리 화면: ' + plan.manageUrl, s.sourceUrl ? '출처: ' + s.sourceUrl : '']).filter(Boolean).join('\n');
+      MANAGE_NOTE, s.sourceUrl ? '출처: ' + s.sourceUrl : '']).filter(Boolean).join('\n');
     const place = placeOf(s);
     lines.push('BEGIN:VEVENT');
     // 같은 정책·단계는 같은 UID → 다시 받으면 캘린더가 새로 만들지 않고 고쳐 씀
-    lines.push('UID:' + uidPart(plan.plcyNo) + '-' + uidPart(s.id) + '-' + ev.kind + '@dontmiss');
+    lines.push('UID:' + uidOf(plan.plcyNo, s.id, ev.kind));
     lines.push('DTSTAMP:' + now);
     if (ev.allDay) {
       lines.push('DTSTART;VALUE=DATE:' + compact(ev.start));
@@ -155,7 +169,7 @@ function buildIcs(plan, steps, today) {
     lines.push(textProp('SUMMARY', '[놓치지 마] ' + ev.summary, SUMMARY_MAX));
     lines.push(textProp('DESCRIPTION', desc, DESC_MAX));
     if (place) lines.push(textProp('LOCATION', place, 200));
-    if (plan.manageUrl) lines.push('URL:' + plan.manageUrl);
+    if (/^https?:\/\/[A-Za-z0-9.:-]+$/.test(plan.siteUrl || '')) lines.push('URL:' + plan.siteUrl);   // 사이트 주소만 (긴 링크 금지)
     lines.push('TRANSP:TRANSPARENT');   // 다른 일정과 겹쳐도 "바쁨"으로 막지 않게
     lines.push('BEGIN:VALARM', 'ACTION:DISPLAY', textProp('DESCRIPTION', ev.alarmText, SUMMARY_MAX), 'TRIGGER:' + ev.alarm, 'END:VALARM');
     lines.push('END:VEVENT');
@@ -176,7 +190,7 @@ function googleLink(plan, step, today) {
     : compact(ev.start) + 'T090000/' + compact(ev.start) + 'T091500');
   q.set('ctz', TZ);
   if (ev.rrule) q.set('recur', 'RRULE:' + ev.rrule);
-  q.set('details', cleanText([plan.policyName].concat(detailLines(step), [step.note, '관리 화면: ' + plan.manageUrl]).filter(Boolean).join('\n'), DESC_MAX));
+  q.set('details', cleanText([plan.policyName].concat(detailLines(step), [step.note, MANAGE_NOTE]).filter(Boolean).join('\n'), DESC_MAX));
   const place = placeOf(step);
   if (place) q.set('location', cleanText(place, 200));
   return 'https://calendar.google.com/calendar/render?' + q.toString();
@@ -223,6 +237,7 @@ function cleanSteps(list) {
       note: L.oneLine(s.note, 200), warning: L.oneLine(s.warning, 160), evidence: L.oneLine(s.evidence, 300),
       sourceUrl: L.safeUrl(s.sourceUrl),
       summary: L.oneLine(s.summary, 80), items: cleanItems(s.items),
+      estimated: s.estimated === true && type === 'exact',   // 예상 날짜 (캘린더에는 그대로 하루 전 알림)
     };
   }).filter(Boolean);
 }
@@ -303,5 +318,5 @@ function readCalendarLink(d, sig, secret) {
 
 module.exports = {
   buildIcs, googleLink, alarmLabel, eventFor, nextMonday, nextFirstOfMonth, itemLines, cleanItems,
-  cleanSteps, makeCalendarLink, readCalendarLink, LINK_PATH, esc, fold, cleanText,
+  cleanSteps, makeCalendarLink, readCalendarLink, LINK_PATH, esc, fold, cleanText, textProp, uidOf, stamp, TZ, PRODID, MANAGE_NOTE,
 };
