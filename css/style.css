@@ -1334,3 +1334,15 @@ body.retro {
 .ls-bad { background: #fdecec; color: var(--miss); }
 .ls-gray { background: #eef0f5; color: var(--muted); }
 .link-checked { margin-top: 8px; font-size: 0.76rem; color: var(--muted); }
+
+/* ----- 관리 화면: 단계 요약 · 항목(서류·할 일 등) 체크리스트 ----- */
+.tl-summary { font-size: 0.88rem; color: var(--text); margin-top: 4px; word-break: keep-all; }
+.sub-checklist { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.sub-item { display: flex; align-items: center; gap: 8px; font-size: 0.86rem; overflow-wrap: anywhere; }
+.sub-item input[type="checkbox"] { width: 17px; height: 17px; flex: none; accent-color: var(--accent); }
+.sub-item.done label { color: var(--muted); text-decoration: line-through; }
+.sub-kind { font-size: 0.72rem; font-weight: 700; color: var(--accent); background: var(--accent-soft); border-radius: 999px; padding: 2px 7px; white-space: nowrap; }
+.sub-checklist.edit .sub-item { flex-wrap: wrap; }
+.ai-kind { font: inherit; font-size: 0.82rem; padding: 6px 8px; border: 2px solid var(--line); border-radius: 10px; background: #fff; color: var(--text); }
+.ai-item-text { flex: 1 1 160px; min-width: 0; padding: 8px 12px; font-size: 0.88rem; }
+.ai-items { margin-top: 8px; }

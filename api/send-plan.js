@@ -52,6 +52,15 @@ function link(text, url, size) {
   return '<a href="' + L.escapeHtml(url) + '" style="color:' + C.accent + ';font-size:' + (size || 13) + 'px;font-weight:700;text-decoration:none;">' + L.escapeHtml(text) + '</a>';
 }
 
+// 단계에 딸린 항목(서류·할 일 등) — 체크한 항목은 ☑ + 흐리게
+function itemsHtml(s) {
+  if (!s.items || !s.items.length) return '';
+  return '<div style="margin-top:6px;">' + s.items.map(function (x) {
+    return '<div style="font-size:13px;line-height:1.6;color:' + (x.done ? C.muted : C.text) + ';' + (x.done ? 'text-decoration:line-through;' : '') + '">' +
+      (x.done ? '☑ ' : '☐ ') + '<span style="color:' + C.muted + ';">[' + L.escapeHtml(x.kind) + ']</span> ' + L.escapeHtml(x.text) + '</div>';
+  }).join('') + '</div>';
+}
+
 function stepRow(s, i, today) {
   const done = s.done;
   const mark = done
@@ -63,6 +72,8 @@ function stepRow(s, i, today) {
     '<td style="padding:12px 0;border-bottom:1px solid ' + C.line + ';">' +
     '<div style="font-size:15px;font-weight:700;color:' + (done ? C.muted : C.text) + ';' + (done ? 'text-decoration:line-through;' : '') + '">' + L.escapeHtml(s.title) + '</div>' +
     '<div style="font-size:13px;font-weight:700;color:' + C.accent + ';margin-top:2px;">' + L.escapeHtml(dateText(s)) + (alarm && !done ? ' · ' + L.escapeHtml(alarm) : '') + (done ? ' · 완료' : '') + '</div>' +
+    (s.summary ? '<div style="font-size:13px;color:' + C.text + ';margin-top:3px;">' + L.escapeHtml(s.summary) + '</div>' : '') +
+    itemsHtml(s) +
     (s.note ? '<div style="font-size:13px;color:' + C.muted + ';margin-top:3px;">' + L.escapeHtml(s.note) + '</div>' : '') +
     (s.evidence ? '<div style="font-size:12px;color:' + C.muted + ';margin-top:3px;border-left:3px solid #d5dcf3;padding-left:8px;">근거: “' + L.escapeHtml(s.evidence) + '”</div>' : '') +
     (s.warning ? '<div style="font-size:13px;font-weight:700;color:' + C.red + ';background:' + C.redSoft + ';border-radius:8px;padding:6px 10px;margin-top:6px;">⚠ ' + L.escapeHtml(s.warning) + '</div>' : '') +
@@ -141,6 +152,8 @@ function buildText(plan, steps, today, mode, calLink) {
   if (calLink) lines.push('📱 내 폰 캘린더에 추가: ' + calLink, BUTTON_HINT, '');
   steps.forEach(function (s, i) {
     lines.push((s.done ? '[완료] ' : (i + 1) + '. ') + s.title + ' — ' + dateText(s) + (s.done ? '' : (ICS.alarmLabel(s, today) ? ' · ' + ICS.alarmLabel(s, today) : '')));
+    if (s.summary) lines.push('   ' + s.summary);
+    (s.items || []).forEach(function (x) { lines.push('   ' + (x.done ? '[v] ' : '[ ] ') + '[' + x.kind + '] ' + x.text); });
     if (s.note) lines.push('   ' + s.note);
     if (s.warning) lines.push('   ⚠ ' + s.warning);
     if (s.evidence) lines.push('   근거: "' + s.evidence + '"');
@@ -207,14 +220,16 @@ module.exports = async function handler(req, res) {
   plan.manageLink = manage.level === 'basic' ? '' : manage.url;   // 구글 캘린더 일정 설명에는 기본 주소(plan.manageUrl)만 씀
   if (!calLink && ics.count) console.warn('[send-plan] 캘린더 버튼 링크를 만들지 못함 (ICS_SIGN_SECRET 또는 PUBLIC_BASE_URL 확인)');
   if (calLink.length > LINK_WARN_CHARS) console.warn('[send-plan] 캘린더 링크가 김: ' + calLink.length + '자');
+  // 제목: 스팸으로 분류되지 않게 느낌표·이모지·특수문자 없이 짧게 (정책명 속 특수문자도 정리)
+  const subjectName = policyName.replace(/[!?~★☆♥♡※▶◀■□●○◆◇“”"'`^*#@$%&|<>{}\[\]]/g, '').replace(/\s+/g, ' ').trim().slice(0, 60);
   const subject = mode === 'update'
-    ? '[놓치지 마!] ' + policyName + ' 새 일정 (캘린더에 추가)'
-    : '[놓치지 마!] ' + policyName + ' 신청 후 할 일 정리';
+    ? '놓치지 마 - ' + subjectName + ' 새 일정 안내'
+    : '놓치지 마 - ' + subjectName + ' 신청 후 할 일 정리';
 
   try {
     const transporter = nodemailer.createTransport({ service: 'gmail', auth: { user: user, pass: pass } });
     await transporter.sendMail({
-      from: { name: '놓치지 마!', address: user },
+      from: { name: '놓치지 마', address: user },
       to: email,
       subject: subject,
       text: buildText(plan, steps, today, mode, calLink),

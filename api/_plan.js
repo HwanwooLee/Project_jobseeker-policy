@@ -3,7 +3,8 @@
    - 메일의 [관리 화면 열기] = /manage.html?d=<압축한 관리 기록>&sig=<서명>
    - 다른 브라우저(폰 사파리 등)에서 열어도 링크만으로 관리 화면을 되살림
    - 담는 것: 정책번호, 정책 스냅샷(정책명·기관·신청 링크·요약·신청 기간), 신청일,
-             단계 날짜(직접 입력·안내 문자에서 찾은 날짜·추가 일정), 완료 체크 상태, 제출 서류 체크,
+             단계 날짜(직접 입력·안내 문자에서 찾은 날짜·추가 일정), 완료 체크 상태·완료일, 제출 서류 체크,
+             단계별 요약·항목(서류·할 일 등)과 항목 체크 상태,
              받는 사람 이메일 — 단, 이메일은 AES-256-GCM으로 암호화해서 넣음 (링크 글자만 봐서는 주소가 안 보임)
    - 담지 않는 것: 설문 답(나이·소득 등) — 아래 cleanRecord가 허용한 항목만 통과
    - 서명은 캘린더 링크와 같은 ICS_SIGN_SECRET을 쓰되 앞에 "plan-v1."을 붙여 서로 바꿔 쓸 수 없게 함
@@ -15,6 +16,7 @@
 const crypto = require('crypto');
 const zlib = require('zlib');
 const L = require('./_lib');
+const ICS = require('./_ics');   // 항목(서류·할 일 등) 정리 규칙을 같이 씀
 
 const MAX_LINK_CHARS = 6000;   // 링크 전체 길이 한도 (넘으면 완료 체크를 빼고, 그래도 넘으면 기본 링크)
 const MAX_D_CHARS = 6000;
@@ -24,7 +26,8 @@ const YM_RE = /^\d{4}-\d{2}$/;
 const STATUS = ['상시', '모집중', '기간 확인 필요'];
 
 // ----- 관리 기록 정리: 허용한 항목만, 길이 제한 -----
-function cleanRecord(r) {
+// itemChars: 항목 글자 수 제한 (링크가 6,000자를 넘으면 40자로 줄여서 다시 만듦)
+function cleanRecord(r, itemChars) {
   if (!r || typeof r !== 'object') return null;
   const plcyNo = String(r.plcyNo || '');
   const plcyNm = L.oneLine(r.plcyNm, 120);
@@ -44,6 +47,9 @@ function cleanRecord(r) {
         if (months.length) c.doneMonths = months;
       }
       if (L.isYmd(s.lastCheckedAt)) c.lastCheckedAt = s.lastCheckedAt;
+      // 완료일 (완료된 단계를 완료한 순서로 보여 줄 때 씀) — 날짜까지만
+      const doneAt = String(s.doneAt || '').slice(0, 10);
+      if (c.done && L.isYmd(doneAt)) c.doneAt = doneAt;
       if (Object.keys(c).length) steps[id] = c;
     });
     if (Object.keys(steps).length) out.steps = steps;
@@ -71,12 +77,28 @@ function cleanRecord(r) {
   }
   // 안내 문자에서 "새 단계로 추가"한 일정
   if (Array.isArray(r.extraSteps)) {
+    // 날짜가 없는 일정(안내 문자에 날짜 없이 할 일만 적힌 경우)도 저장 → date: null
     const ex = r.extraSteps.slice(0, 10).map(function (x) {
-      if (!x || !ID_RE.test(String(x.id || '')) || !L.isYmd(x.date)) return null;
+      if (!x || !ID_RE.test(String(x.id || ''))) return null;
       const title = L.oneLine(x.title, 40);
-      return title ? { id: x.id, title: title, date: x.date, evidence: L.oneLine(x.evidence, 300) } : null;
+      return title ? { id: x.id, title: title, date: L.isYmd(x.date) ? x.date : null, evidence: L.oneLine(x.evidence, 300) } : null;
     }).filter(Boolean);
     if (ex.length) out.extraSteps = ex;
+  }
+  // 단계별 요약·항목 (안내 문자 AI 정리에서 사용자가 확인하고 저장한 것만)
+  if (r.stepNotes && typeof r.stepNotes === 'object') {
+    const notes = {};
+    Object.keys(r.stepNotes).slice(0, 20).forEach(function (id) {
+      const n = r.stepNotes[id];
+      if (!ID_RE.test(id) || !n || typeof n !== 'object') return;
+      const c = {};
+      const summary = L.oneLine(n.summary, 80);
+      if (summary) c.summary = summary;
+      const items = ICS.cleanItems(n.items, itemChars);
+      if (items.length) c.items = items;
+      if (Object.keys(c).length) notes[id] = c;
+    });
+    if (Object.keys(notes).length) out.stepNotes = notes;
   }
   // 제출 서류 체크 (체크한 서류 이름 목록)
   if (Array.isArray(r.docChecked)) {
@@ -136,9 +158,10 @@ function pack(record, encEmail) {
   return zlib.deflateRawSync(Buffer.from(JSON.stringify(obj), 'utf8'), { level: 9 }).toString('base64url');
 }
 
-// [관리 화면 열기] 링크: 전체 → (6,000자 넘으면) 서류 체크 빼고 → 완료 체크도 빼고 → (그래도 넘으면) 기본 링크
+// [관리 화면 열기] 링크: 전체 → (6,000자 넘으면) 항목 글자를 앞 40자로 → 서류 체크 빼고 → 완료 체크도 빼고
+//                         → (그래도 넘으면) 기본 링크
 // email: 받는 사람 주소 (암호화해서 넣음, 없으면 생략)
-// 돌려주는 값: { url, level: 'full' | 'no-docs' | 'no-checks' | 'basic' }
+// 돌려주는 값: { url, level: 'full' | 'short-items' | 'no-docs' | 'no-checks' | 'basic' }
 function makeManageLink(base, record, secret, email) {
   if (!base) return { url: '', level: 'basic' };
   const basic = { url: base + '/manage.html', level: 'basic' };
@@ -147,6 +170,10 @@ function makeManageLink(base, record, secret, email) {
   const enc = L.isEmail(email) ? encryptEmail(email, secret) : '';
   const tries = [{ rec: clean, level: 'full' }];
   let cur = clean;
+  if (cur.stepNotes) {
+    cur = cleanRecord(record, 40);
+    tries.push({ rec: cur, level: 'short-items' });
+  }
   if (cur.docChecked) {
     cur = Object.assign({}, cur); delete cur.docChecked;
     tries.push({ rec: cur, level: 'no-docs' });

@@ -84,7 +84,24 @@ function fold(line) {
 function stamp() { return new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, ''); }   // 20261112T080000Z
 function uidPart(s) { return String(s).replace(/[^A-Za-z0-9-]/g, '').slice(0, 60) || 'x'; }
 
-// plan: { policyName, plcyNo, manageUrl }, steps: [{ id, title, type, date, done, note, warning, sourceUrl }]
+// ----- 단계에 딸린 항목(서류·할 일 등) → 일정 설명 글 -----
+// 예: "준비할 서류: 주민등록등본, 졸업증명서, 통장 사본" (아직 안 한 항목만)
+const KIND_LABEL = { '서류': '준비할 서류', '할 일': '할 일', '준비물': '준비물', '장소': '장소', '연락처': '연락처' };
+function itemLines(step) {
+  const groups = {}, order = [];
+  (step.items || []).forEach(function (x) {
+    if (x.done) return;
+    const k = KIND_LABEL[x.kind] ? x.kind : '할 일';
+    if (!groups[k]) { groups[k] = []; order.push(k); }
+    groups[k].push(x.text);
+  });
+  return order.map(function (k) { return KIND_LABEL[k] + ': ' + groups[k].join(', '); });
+}
+function detailLines(step) {
+  return [step.summary].concat(itemLines(step)).filter(Boolean);
+}
+
+// plan: { policyName, plcyNo, manageUrl }, steps: [{ id, title, type, date, done, note, warning, sourceUrl, summary, items }]
 function buildIcs(plan, steps, today) {
   const lines = [
     'BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:' + PRODID, 'CALSCALE:GREGORIAN', 'METHOD:PUBLISH',
@@ -99,8 +116,8 @@ function buildIcs(plan, steps, today) {
     const ev = eventFor(s, today);
     if (!ev) return;
     count++;
-    const desc = [plan.policyName, s.note, s.warning ? '⚠ ' + s.warning : '', s.evidence ? '근거: ' + s.evidence : '',
-      '관리 화면: ' + plan.manageUrl, s.sourceUrl ? '출처: ' + s.sourceUrl : ''].filter(Boolean).join('\n');
+    const desc = [plan.policyName].concat(detailLines(s), [s.note, s.warning ? '⚠ ' + s.warning : '', s.evidence ? '근거: ' + s.evidence : '',
+      '관리 화면: ' + plan.manageUrl, s.sourceUrl ? '출처: ' + s.sourceUrl : '']).filter(Boolean).join('\n');
     lines.push('BEGIN:VEVENT');
     // 같은 정책·단계는 같은 UID → 다시 받으면 캘린더가 새로 만들지 않고 고쳐 씀
     lines.push('UID:' + uidPart(plan.plcyNo) + '-' + uidPart(s.id) + '-' + ev.kind + '@dontmiss');
@@ -136,7 +153,7 @@ function googleLink(plan, step, today) {
     : compact(ev.start) + 'T090000/' + compact(ev.start) + 'T091500');
   q.set('ctz', TZ);
   if (ev.rrule) q.set('recur', 'RRULE:' + ev.rrule);
-  q.set('details', [plan.policyName, step.note, '관리 화면: ' + plan.manageUrl].filter(Boolean).join('\n'));
+  q.set('details', [plan.policyName].concat(detailLines(step), [step.note, '관리 화면: ' + plan.manageUrl]).filter(Boolean).join('\n'));
   return 'https://calendar.google.com/calendar/render?' + q.toString();
 }
 
@@ -152,6 +169,19 @@ function alarmLabel(step, today) {
 // ----- 받은 단계 목록 정리 (send-plan.js, add-calendar.js가 함께 씀) -----
 const MAX_STEPS = 15;
 const TYPES = ['exact', 'approx', 'none', 'monthly'];
+const ITEM_KINDS = ['서류', '할 일', '준비물', '장소', '연락처'];
+const MAX_SUB_ITEMS = 10;
+function cleanItems(list, maxText) {
+  if (!Array.isArray(list)) return [];
+  return list.slice(0, MAX_SUB_ITEMS).map(function (x) {
+    if (!x || typeof x !== 'object') return null;
+    const text = L.oneLine(x.text, maxText || 90);
+    if (!text) return null;
+    const item = { kind: ITEM_KINDS.indexOf(x.kind) !== -1 ? x.kind : '할 일', text: text };
+    if (x.done === true) item.done = true;
+    return item;
+  }).filter(Boolean);
+}
 function cleanSteps(list) {
   if (!Array.isArray(list)) return [];
   return list.slice(0, MAX_STEPS).map(function (s) {
@@ -167,6 +197,7 @@ function cleanSteps(list) {
       title: title, type: type, date: date, done: s.done === true,
       note: L.oneLine(s.note, 200), warning: L.oneLine(s.warning, 160), evidence: L.oneLine(s.evidence, 300),
       sourceUrl: L.safeUrl(s.sourceUrl),
+      summary: L.oneLine(s.summary, 80), items: cleanItems(s.items),
     };
   }).filter(Boolean);
 }
@@ -184,13 +215,20 @@ function sign(d, secret) {
   return crypto.createHmac('sha256', secret).update('cal-v1.' + d).digest('base64url').slice(0, SIG_CHARS);
 }
 
-// 캘린더에 들어갈 단계만 짧게 담음 (끝난 단계 제외, 빈 값 생략)
-function packSteps(plan, steps) {
+const KIND_CODE = { '서류': 'd', '할 일': 't', '준비물': 'p', '장소': 'l', '연락처': 'c' };
+const CODE_KIND = { d: '서류', t: '할 일', p: '준비물', l: '장소', c: '연락처' };
+
+// 캘린더에 들어갈 단계만 짧게 담음 (끝난 단계·끝난 항목 제외, 빈 값 생략)
+// itemChars: 항목 글자 수 제한 (링크가 너무 길면 줄여서 다시 만듦)
+function packSteps(plan, steps, itemChars) {
   const urls = [];
   const s = steps.filter(function (x) { return !x.done; }).map(function (x) {
     let u = '';
     if (x.sourceUrl) { u = urls.indexOf(x.sourceUrl); if (u === -1) { urls.push(x.sourceUrl); u = urls.length - 1; } }
-    const row = [x.id, x.title, TYPE_CODE[x.type] || 'n', x.date || '', x.note || '', x.warning || '', x.evidence || '', u === '' ? '' : u];
+    const items = (x.items || []).filter(function (it) { return !it.done; })
+      .map(function (it) { return (KIND_CODE[it.kind] || 't') + it.text.slice(0, itemChars || 90); });
+    const row = [x.id, x.title, TYPE_CODE[x.type] || 'n', x.date || '', x.note || '', x.warning || '', x.evidence || '', u === '' ? '' : u,
+      x.summary || '', items.length ? items : ''];
     while (row.length > 4 && (row[row.length - 1] === '' || row[row.length - 1] === undefined)) row.pop();   // 뒤쪽 빈 값 생략
     return row;
   });
@@ -198,11 +236,19 @@ function packSteps(plan, steps) {
   return zlib.deflateRawSync(Buffer.from(json, 'utf8'), { level: 9 }).toString('base64url');
 }
 
+// 너무 길면: 항목을 앞 40자로 줄여서 → 그래도 길면 항목 없이 다시 만듦
 function makeCalendarLink(base, plan, steps, secret) {
   if (!base || !secret) return '';
-  const d = packSteps(plan, steps);
-  if (d.length > MAX_D_CHARS) return '';
-  return base + LINK_PATH + '?d=' + d + '&sig=' + sign(d, secret);
+  const tries = [
+    function () { return packSteps(plan, steps); },
+    function () { return packSteps(plan, steps, 40); },
+    function () { return packSteps(plan, steps.map(function (x) { return Object.assign({}, x, { items: [] }); })); },
+  ];
+  for (let i = 0; i < tries.length; i++) {
+    const d = tries[i]();
+    if (d.length <= MAX_D_CHARS) return base + LINK_PATH + '?d=' + d + '&sig=' + sign(d, secret);
+  }
+  return '';
 }
 
 // 돌려주는 값: { plan, steps } 또는 { error: 'bad_sig' | 'bad_data' }
@@ -222,7 +268,8 @@ function readCalendarLink(d, sig, secret) {
   const steps = cleanSteps(obj.s.map(function (r) {
     if (!Array.isArray(r)) return null;
     return { id: r[0], title: r[1], type: CODE_TYPE[r[2]] || 'none', date: r[3] || null, note: r[4], warning: r[5], evidence: r[6],
-      sourceUrl: typeof r[7] === 'number' ? urls[r[7]] : '' };
+      sourceUrl: typeof r[7] === 'number' ? urls[r[7]] : '', summary: r[8] || '',
+      items: Array.isArray(r[9]) ? r[9].map(function (t) { t = String(t || ''); return { kind: CODE_KIND[t[0]] || '할 일', text: t.slice(1) }; }) : [] };
   }));
   const plan = { policyName: L.oneLine(obj.n, 120), plcyNo: L.oneLine(obj.no, 40).replace(/[^0-9A-Za-z-]/g, '') };
   if (!plan.policyName || !steps.length) return { error: 'bad_data' };
@@ -230,6 +277,6 @@ function readCalendarLink(d, sig, secret) {
 }
 
 module.exports = {
-  buildIcs, googleLink, alarmLabel, eventFor, nextMonday, nextFirstOfMonth,
+  buildIcs, googleLink, alarmLabel, eventFor, nextMonday, nextFirstOfMonth, itemLines, cleanItems,
   cleanSteps, makeCalendarLink, readCalendarLink, LINK_PATH,
 };

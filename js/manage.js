@@ -124,6 +124,7 @@
       plcyNo: app.plcyNo, plcyNm: app.plcyNm, appliedAt: app.appliedAt,
       steps: app.steps || {}, customDates: app.customDates || {}, stepDates: app.stepDates || {},
       dateEvidence: app.dateEvidence || {}, extraSteps: app.extraSteps || [], snapshot: snap,
+      stepNotes: app.stepNotes || {},   // 단계별 요약·항목(서류·할 일 등)과 체크 상태
       docChecked: Object.keys(loadDocs(app.plcyNo).checked || {}),   // 제출 서류 체크 (링크가 길면 서버가 가장 먼저 뺌)
     };
   }
@@ -256,16 +257,42 @@
       });
     });
 
-    // 안내 문자에서 찾아 "새 단계로 추가"한 일정 (날짜 순으로, 신청 완료 바로 뒤에)
-    (app.extraSteps || []).slice().sort(function (a, b) { return String(b.date).localeCompare(String(a.date)); }).forEach(function (x) {
+    // 안내 문자에서 찾아 "새 단계로 추가"한 일정 (날짜가 없으면 "날짜 미정")
+    (app.extraSteps || []).forEach(function (x) {
       const state = (app.steps && app.steps[x.id]) || {};
-      steps.splice(1, 0, {
-        id: x.id, title: x.title, type: 'exact', date: x.date, note: '', warning: '', weeklyCheck: '',
-        source: { manual: true, text: '안내 문자에서 찾은 날짜' }, evidence: x.evidence || '',
+      steps.push({
+        id: x.id, title: x.title, type: x.date ? 'exact' : 'none', date: x.date || null, note: '', warning: '', weeklyCheck: '',
+        source: { manual: true, text: x.date ? '안내 문자에서 찾은 날짜' : '안내 문자에서 찾은 할 일' }, evidence: x.evidence || '',
         extra: true, state: state, monthly: false, done: !!state.done,
       });
     });
-    return { steps: steps, isCommon: isCommon };
+
+    // 안내 문자에서 저장한 요약·항목(서류·할 일 등)을 단계에 붙임
+    const notes = app.stepNotes || {};
+    steps.forEach(function (st) {
+      const n = notes[st.id];
+      st.summary = n && n.summary ? n.summary : '';
+      st.items = n && Array.isArray(n.items) ? n.items : [];
+    });
+    return { steps: sortSteps(steps), isCommon: isCommon };
+  }
+
+  // 단계 순서 (관리 화면과 메일이 같은 순서):
+  //   완료된 단계 → 위에, 완료한 날짜 순 (신청 완료는 신청일 기준)
+  //   안 끝난 단계 → 날짜 순, 날짜 미정·매월 반복은 맨 아래 (원래 순서 유지)
+  function sortSteps(steps) {
+    const withIndex = steps.map(function (st, i) { return { s: st, i: i }; });
+    function doneKey(x) {
+      if (x.s.id === 'applied') return x.s.date || '';
+      return String((x.s.state && x.s.state.doneAt) || '').slice(0, 10) || x.s.date || '9999-12-31';
+    }
+    const done = withIndex.filter(function (x) { return x.s.done && !x.s.monthly; })
+      .sort(function (a, b) { return doneKey(a).localeCompare(doneKey(b)) || a.i - b.i; });
+    const rest = withIndex.filter(function (x) { return !(x.s.done && !x.s.monthly); });
+    const dated = rest.filter(function (x) { return x.s.type === 'exact' && x.s.date; })
+      .sort(function (a, b) { return a.s.date.localeCompare(b.s.date) || a.i - b.i; });
+    const undated = rest.filter(function (x) { return !(x.s.type === 'exact' && x.s.date); });
+    return done.concat(dated, undated).map(function (x) { return x.s; });
   }
 
   function evidenceOf(app, key) {
@@ -484,6 +511,8 @@
       const src = sourceNode(s.source);
       if (src) date.append(' ', src);
       li.appendChild(date);
+      if (s.summary) li.appendChild(el('p', 'tl-summary', s.summary));
+      if (s.items.length) li.appendChild(itemChecklist(app, s));
       if (s.note) li.appendChild(el('p', 'tl-note', s.note));
       if (s.evidence) li.appendChild(el('p', 'tl-evidence', '근거: “' + s.evidence + '”'));
       if (s.warning) li.appendChild(el('p', 'tl-warn', '⚠ ' + s.warning));
@@ -544,6 +573,31 @@
     foot.appendChild(stop);
     card.appendChild(foot);
     return card;
+  }
+
+  // 단계에 딸린 항목(서류·할 일 등) 체크리스트 — 체크 상태도 메일 링크에 담김
+  function itemChecklist(app, s) {
+    const ul = el('ul', 'sub-checklist');
+    s.items.forEach(function (x, k) {
+      const li = el('li', 'sub-item' + (x.done ? ' done' : ''));
+      const box = el('input');
+      box.type = 'checkbox';
+      box.id = 'item-' + app.plcyNo + '-' + s.id + '-' + k;
+      box.checked = !!x.done;
+      box.addEventListener('change', function () {
+        x.done = box.checked;     // app.stepNotes 안의 항목을 그대로 바꿈
+        if (!x.done) delete x.done;
+        markChanged(app);
+        saveApps();
+        render();
+      });
+      const label = el('label', null);
+      label.htmlFor = box.id;
+      label.append(el('span', 'sub-kind', x.kind), ' ' + x.text);
+      li.append(box, label);
+      ul.appendChild(li);
+    });
+    return ul;
   }
 
   function sectionTitle(emoji, title) {
@@ -643,6 +697,7 @@
           done: s.monthly ? false : !!s.done,       // 매월 할 일은 이번 달 체크와 관계없이 앞으로도 알림
           note: s.note || '', warning: s.warning || '', evidence: s.evidence || '',
           sourceUrl: (s.source && s.source.url) || '',
+          summary: s.summary || '', items: (s.items || []).map(function (x) { return { kind: x.kind, text: x.text, done: !!x.done }; }),
         };
       });
   }
@@ -757,19 +812,35 @@
   }
 
   // 돌려주는 값: 저장한 단계의 id (메일로 이 일정만 다시 보낼 때 씀)
+  // 요약·항목 저장: 같은 단계에 이미 있으면 뒤에 붙임 (같은 글자는 한 번만)
+  function saveNotes(app, stepId, item) {
+    const items = (item.items || []).map(function (x) { return { kind: x.kind, text: String(x.text || '').trim() }; })
+      .filter(function (x) { return x.text; });
+    if (!item.summary && !items.length) return;
+    app.stepNotes = app.stepNotes || {};
+    const cur = app.stepNotes[stepId] = app.stepNotes[stepId] || { summary: '', items: [] };
+    if (item.summary) cur.summary = item.summary;
+    items.forEach(function (x) { if (!cur.items.some(function (y) { return y.text === x.text; })) cur.items.push(x); });
+    cur.items = cur.items.slice(0, 10);
+  }
+
   function saveAiItem(app, steps, item, targetId) {
     app.dateEvidence = app.dateEvidence || {};
     if (targetId === 'new') {
       const newId = 'ai-' + Date.now().toString(36);
       app.extraSteps = app.extraSteps || [];
-      app.extraSteps.push({ id: newId, title: item.step.slice(0, 40), date: item.date, evidence: item.evidence });
+      app.extraSteps.push({ id: newId, title: item.step.slice(0, 40), date: item.date || null, evidence: item.evidence });
+      saveNotes(app, newId, item);
       markChanged(app);
       saveApps();
       return newId;
     } else {
       const target = steps.find(function (s) { return s.id === targetId; });
       if (!target) return null;
-      if (target.dateKey) {                    // 날짜 입력칸이 있는 단계 → 그 칸에 저장
+      saveNotes(app, target.id, item);
+      if (!item.date) {                        // 날짜 없는 결과 → 요약·항목만 붙이고 날짜는 그대로
+        if (item.evidence && !evidenceOf(app, target.dateKey || target.id)) app.dateEvidence[target.dateKey || target.id] = item.evidence;
+      } else if (target.dateKey) {             // 날짜 입력칸이 있는 단계 → 그 칸에 저장
         app.customDates = app.customDates || {};
         app.customDates[target.dateKey] = item.date;
         app.dateEvidence[target.dateKey] = item.evidence;
@@ -862,11 +933,18 @@
       head.append(el('span', 'tl-title', item.step), el('span', 'tl-type ' + DATE_TYPE_CLASS[item.dateType], DATE_TYPE_LABEL[item.dateType]));
       box.appendChild(head);
       if (item.date) box.appendChild(el('p', 'tl-when', prettyDate(item.date)));
-      else box.appendChild(el('p', 'ai-nodate', '날짜를 찾지 못했어요. 안내를 받으면 직접 입력해 주세요'));
+      else box.appendChild(el('p', 'ai-nodate', '날짜 없음 · 안내를 받으면 직접 입력해 주세요'));
+      if (item.summary) box.appendChild(el('p', 'tl-summary', item.summary));
+      if (!st.saved[i]) box.appendChild(aiItemEditor(item));
+      else if (item.items && item.items.length) {
+        const ul = el('ul', 'sub-checklist');
+        item.items.forEach(function (x) { const li = el('li', 'sub-item'); li.append(el('span', 'sub-kind', x.kind), ' ' + x.text); ul.appendChild(li); });
+        box.appendChild(ul);
+      }
       if (item.evidence) box.appendChild(el('p', 'tl-evidence', '근거: “' + item.evidence + '”'));
       (item.warnings || []).forEach(function (w) { box.appendChild(el('p', 'tl-warn', '⚠ ' + w)); });
 
-      if (item.date) {
+      if (item.date || (item.items && item.items.length) || item.summary) {
         if (st.saved[i]) {
           box.appendChild(el('p', 'ai-saved', '✓ 저장했어요'));
           const note = st.mailNotes && st.mailNotes[i];
@@ -888,7 +966,7 @@
           const sel = el('select', 'ai-select');
           sel.id = selId;
           targets.forEach(function (s) { const o = el('option', null, s.title); o.value = s.id; sel.appendChild(o); });
-          const optNew = el('option', null, '새 단계로 추가: ' + item.step);
+          const optNew = el('option', null, '새 단계로 추가: ' + item.step + (item.date ? '' : ' (날짜 미정)'));
           optNew.value = 'new';
           sel.appendChild(optNew);
           sel.value = guessTarget(item, steps);
@@ -899,7 +977,7 @@
             st.saved[i] = true;
             st.mailNotes = st.mailNotes || {};
             // 이메일 주소를 저장하지 않으므로 자동 발송은 하지 않음 → 다시 받기를 안내
-            if (savedId) st.mailNotes[i] = { ok: true, offer: !!app.linkEmail, text: CHANGED_NOTICE + ' 새 메일의 캘린더 버튼에 이 일정도 들어가요.' };
+            if (savedId) st.mailNotes[i] = { ok: true, offer: !!app.linkEmail, text: CHANGED_NOTICE + (item.date ? ' 새 메일의 캘린더 버튼에 이 일정도 들어가요.' : '') };
             render();
           });
           row.append(label, sel, save);
@@ -908,6 +986,40 @@
       }
       wrap.appendChild(box);
     });
+    return wrap;
+  }
+
+  // AI가 찾은 항목(서류·할 일 등) 고치기·지우기 — 저장 전까지 화면 메모리에서만 바뀜
+  const ITEM_KINDS = ['서류', '할 일', '준비물', '장소', '연락처'];
+  function aiItemEditor(item) {
+    const wrap = el('div', 'ai-items');
+    item.items = item.items || [];
+    if (!item.items.length) {
+      wrap.appendChild(el('p', 'empty-note', '문자에 적힌 서류·할 일이 없어요.'));
+      return wrap;
+    }
+    wrap.appendChild(el('p', 'custom-label', '문자에 적힌 항목 (고치거나 지운 뒤 저장할 수 있어요)'));
+    const ul = el('ul', 'sub-checklist edit');
+    item.items.forEach(function (x, k) {
+      const li = el('li', 'sub-item');
+      const kind = el('select', 'ai-kind');
+      kind.setAttribute('aria-label', '항목 종류');
+      ITEM_KINDS.forEach(function (name) { const o = el('option', null, name); o.value = name; kind.appendChild(o); });
+      kind.value = ITEM_KINDS.indexOf(x.kind) !== -1 ? x.kind : '할 일';
+      kind.addEventListener('change', function () { x.kind = kind.value; });
+      const input = el('input', 'date-input ai-item-text');
+      input.type = 'text';
+      input.value = x.text;
+      input.maxLength = 90;
+      input.setAttribute('aria-label', '항목 내용');
+      input.addEventListener('input', function () { x.text = input.value; });
+      const del = el('button', 'mini-btn', '지우기');
+      del.type = 'button';
+      del.addEventListener('click', function () { item.items.splice(k, 1); render(); });
+      li.append(kind, input, del);
+      ul.appendChild(li);
+    });
+    wrap.appendChild(ul);
     return wrap;
   }
 
@@ -969,16 +1081,9 @@
     $('start-card').hidden = false;
     $('start-form').addEventListener('submit', function (e) {
       e.preventDefault();
-      const wantMail = e.submitter && e.submitter.id === 'start-mail';
       const v = dateInput.value;
-      const email = $('start-email').value.trim();
       if (!parseYmd(v) || daysFromToday(v) > 0) {
         $('start-error').textContent = '신청한 날짜를 다시 확인해 주세요. 오늘 이후 날짜는 고를 수 없어요.';
-        return;
-      }
-      if (wantMail && !EMAIL_RE.test(email)) {
-        $('start-error').textContent = '메일을 받으려면 이메일 주소를 확인해 주세요. (예: name@example.com)';
-        $('start-email').focus();
         return;
       }
       apps.items[incomingNo] = {
@@ -989,7 +1094,6 @@
       if (!saveApps()) return;
       $('start-card').hidden = true;
       openDetail(incomingNo, true);       // 주소의 ?plcyNo= 를 지우고 그 정책 관리 화면으로
-      if (wantMail) sendPlan(apps.items[incomingNo], 'full', email);   // 메일 칸에 결과가 표시됨
       render();
       const target = document.getElementById('app-' + incomingNo);
       if (target) target.classList.add('flash');
