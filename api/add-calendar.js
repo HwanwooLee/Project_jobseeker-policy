@@ -7,7 +7,7 @@
         안드로이드: 카카오톡이면 kakaotalk://web/openExternal 먼저, 아니면 intent://…package=com.android.chrome (크롬)
         자동으로 안 넘어갈 때를 위해 안내 페이지([사파리/크롬으로 열기], [링크 복사])도 함께 보여줌
    3) 기본 브라우저
-        아이폰·맥 사파리 → .ics를 바로 보여줌 (inline) → "모두 추가" 창
+        아이폰·맥 사파리 → .ics를 바로 보여줌 (inline) → 일정 화면 (아래쪽 [캘린더에 추가]·[모두 추가]로 저장)
         안드로이드 크롬·PC → 안내 페이지 ([캘린더 파일 받기] = &dl=1 다운로드 / 구글 캘린더 링크)
    ========================================================= */
 'use strict';
@@ -126,7 +126,7 @@ module.exports = async function handler(req, res) {
       '<p class="m">날짜가 이미 지났거나 모든 단계를 마쳤어요. 새 안내를 받으면 관리 화면에서 날짜를 입력해 주세요.</p>');
   }
 
-  // 3) 기본 브라우저: 아이폰·맥 사파리는 바로 보여주기(inline) → "모두 추가" / [캘린더 파일 받기]는 다운로드
+  // 3) 기본 브라우저: 아이폰·맥 사파리는 바로 보여주기(inline) → 아래쪽 [캘린더에 추가]·[모두 추가] / [캘린더 파일 받기]는 다운로드
   const download = q.get('dl') === '1';
   if (download || isApple(ua)) {
     res.statusCode = 200;
@@ -150,7 +150,7 @@ module.exports = async function handler(req, res) {
     '<a class="b" href="' + L.escapeHtml(dlHref) + '">📅 캘린더 파일 받기</a>' +
     '<p class="s">받은 파일(' + FILE_NAME + ')을 누르고 <b>삼성 캘린더</b> 같은 캘린더 앱을 고른 뒤 "저장/가져오기"를 눌러 주세요.</p>' +
     '<div class="box"><h2>구글 캘린더 앱만 쓴다면</h2><p class="s" style="margin:0 0 6px">구글 캘린더 앱은 파일을 직접 못 가져와서, 아래를 하나씩 눌러 추가해 주세요. (알림은 캘린더 기본 설정을 따라요)</p>' + gLinks + '</div>' +
-    '<div class="box"><h2>아이폰이라면</h2><p class="s" style="margin:0">이 페이지를 <b>사파리</b>로 열면 "모두 추가" 창이 바로 떠요.</p></div>');
+    '<div class="box"><h2>아이폰이라면</h2><p class="s" style="margin:0">이 페이지를 <b>사파리</b>로 열면 일정 화면이 바로 떠요. 화면 아래쪽 [캘린더에 추가] 또는 [모두 추가]를 눌러 주세요. 오른쪽 위 ✓는 닫기 버튼이에요.</p></div>');
 };
 
 // 테스트용

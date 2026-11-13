@@ -689,6 +689,8 @@
   // --- 📧 관리 메일 + 캘린더 추가 버튼 → /api/send-plan ---
   // full: 전체 단계 + 지금 화면 상태가 담긴 새 [관리 화면 열기] 링크
   // 메일 주소는 어디에도 저장하지 않음 (보낼 때마다 직접 입력)
+  // [📱 내 폰 캘린더에 추가] 버튼 안내 (api/send-plan.js의 BUTTON_HINT와 같은 문구)
+  const CALENDAR_HINT = '[📱 내 폰 캘린더에 추가]를 누르면 사파리(안드로이드는 크롬)로 넘어가요. 화면 아래쪽 [캘린더에 추가] 또는 [모두 추가]를 눌러 주세요. 오른쪽 위 ✓는 닫기 버튼이에요.';
   const CHANGED_NOTICE = '바꾼 내용은 [관리 메일 다시 받기]를 눌러야 메일 링크에 저장돼요.';
   const EMAIL_RE = /^[^\s@<>"',;:()\[\]\\]+@[^\s@<>"',;:()\[\]\\]+\.[A-Za-z]{2,}$/;
   const MAIL_COOLDOWN = 30;
@@ -767,6 +769,7 @@
     const sec = el('section', 'sheet-section');
     sec.appendChild(sectionTitle('📧', '관리 메일 · 캘린더'));
     sec.appendChild(el('p', 'sheet-hint top', '단계별 할 일, [📱 내 폰 캘린더에 추가] 버튼, 이 관리 화면을 다시 여는 [관리 화면 열기] 링크를 메일로 보내 드려요. 캘린더에 넣으면 날짜 있는 일정은 하루 전, 매월 할 일은 매월 1일, 날짜 미정 단계는 매주 월요일에 캘린더가 알려 줘요.'));
+    sec.appendChild(el('p', 'sheet-hint top', CALENDAR_HINT));   // 메일 캘린더 버튼 아래 안내와 같은 문구
     // 탭을 닫으면 사라진다는 안내 (바뀐 내용이 있으면 강조)
     sec.appendChild(el('p', app.changed ? 'changed-notice' : 'sheet-hint top', CHANGED_NOTICE + ' 이 탭을 닫으면 화면에서 바꾼 내용은 사라져요.'));
     const row = el('div', 'mail-row');
